@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>新需求 · 需求池</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="topbar">
+  <span class="brand">＋ 新需求</span>
+  <span class="sp"></span>
+  <a class="btn small" href="javascript:history.length>1?history.back():location.href='/'">返回</a>
+</div>
+<div class="wrap" style="max-width:720px">
+  <div class="card">
+    <div class="fld-row">
+      <label class="fld" style="min-width:180px"><span>研发项目 *</span><select id="project"></select></label>
+      <label class="fld" style="min-width:150px"><span>类型</span><select id="type">
+        <option value="req">需求</option><option value="bug">Bug</option><option value="opt">优化</option>
+      </select></label>
+      <label class="fld" style="min-width:120px"><span>紧急度</span><select id="urgency">
+        <option value="normal">普通</option><option value="urgent">紧急</option>
+      </select></label>
+    </div>
+    <label class="fld"><span>标题 *</span><input type="text" id="title" maxlength="200"
+      placeholder="一句话说清问题，例：PDA 采集事件保存后列表不刷新"></label>
+    <div id="dedup"></div>
+    <label class="fld"><span>描述 / 复现步骤</span><textarea id="desc" rows="6"
+      placeholder="现象、复现步骤、期望结果；现场环境（医院/项目名）可写在描述或标签里"></textarea></label>
+    <label class="fld"><span>标签（可多选，可输入新标签后点添加）</span>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="tag-in" list="tag-list" placeholder="如：无锡二院、采集完善"
+          style="flex:1">
+        <button class="btn" id="tag-add" type="button">添加</button>
+      </div>
+      <datalist id="tag-list"></datalist>
+      <div id="tags" style="margin-top:8px"></div>
+    </label>
+    <label class="fld"><span>截图（可选，最多 3 张，自动压缩）</span>
+      <input type="file" id="files" accept="image/png,image/jpeg,image/webp,image/gif" multiple>
+      <div id="thumbs" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"></div>
+    </label>
+    <button class="btn primary" id="go" style="width:100%">提 交</button>
+    <div class="err" id="err"></div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+const ST = { submitted:'待复现确认', confirmed:'已确认', scheduled:'已排期', fixed:'已修复',
+  verified:'已验证', closed:'已关闭', dup_closed:'重复关闭' };
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (r.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+  return r.json();
+}
+
+// ---- 标签 chips ----
+const tagSet = new Set();
+function renderTags() {
+  $('tags').innerHTML = [...tagSet].map(t =>
+    '<span class="tag-chip">' + esc(t) + '<span class="x" data-t="' + esc(t) + '">✕</span></span>').join('');
+}
+$('tag-add').onclick = addTag;
+$('tag-in').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addTag(); } });
+function addTag() {
+  const v = $('tag-in').value.trim().slice(0, 30);
+  if (v) { tagSet.add(v); renderTags(); }
+  $('tag-in').value = ''; $('tag-in').focus();
+}
+$('tags').addEventListener('click', e => {
+  if (e.target.classList.contains('x')) { tagSet.delete(e.target.dataset.t); renderTags(); }
+});
+
+// ---- 截图：压缩 + 预览 ----
+const files = [];
+async function compressImage(file) {
+  if (file.type === 'image/gif') return file;
+  if (file.size <= 300 * 1024) return file;
+  const img = await createImageBitmap(file);
+  const maxSide = 1600;
+  const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.8));
+  return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
+}
+function renderThumbs() {
+  $('thumbs').innerHTML = files.map((f, i) =>
+    '<div style="text-align:center"><img class="thumb" src="' + f._url + '">'
+    + '<div class="sub" style="font-size:11px;cursor:pointer" data-i="' + i + '">移除</div></div>').join('');
+}
+$('files').addEventListener('change', async e => {
+  for (const f of e.target.files) {
+    if (files.length >= 3) { alert('最多 3 张'); break; }
+    const c = await compressImage(f);
+    c._url = URL.createObjectURL(c);
+    files.push(c);
+  }
+  e.target.value = '';
+  renderThumbs();
+});
+$('thumbs').addEventListener('click', e => {
+  const i = e.target.dataset && e.target.dataset.i;
+  if (i !== undefined && e.target.tagName === 'DIV') { files.splice(+i, 1); renderThumbs(); }
+});
+
+// ---- 去重提示 ----
+let debTimer = null;
+$('title').addEventListener('input', () => {
+  clearTimeout(debTimer);
+  debTimer = setTimeout(async () => {
+    const q = $('title').value.trim();
+    if (q.length < 2) { $('dedup').innerHTML = ''; return; }
+    const d = await api('/api/dedup-suggest?q=' + encodeURIComponent(q));
+    $('dedup').innerHTML = d.items.length
+      ? '<div class="dedup-box">⚠️ 疑似重复，先看看这几条：'
+        + d.items.map(x => '<a href="/req.html?id=' + x.id + '">#' + x.id + ' ' + esc(x.title)
+          + '（' + (ST[x.status] || x.status) + '）</a>').join('')
+        + '确属新问题请继续提交</div>'
+      : '';
+  }, 400);
+});
+
+// ---- 提交 ----
+$('go').onclick = async () => {
+  $('err').textContent = '';
+  const title = $('title').value.trim();
+  if (!title) { $('err').textContent = '标题必填'; return; }
+  if (!$('project').value) { $('err').textContent = '请选择研发项目'; return; }
+  $('go').disabled = true; $('go').textContent = '上传中…';
+  try {
+    const attachments = [];
+    for (const f of files) {
+      const fd = new FormData();
+      fd.append('file', f);
+      const up = await api('/api/upload', { method: 'POST', body: fd });
+      if (!up.ok) throw new Error(up.error || '上传失败');
+      attachments.push({ key: up.key, name: up.name, size: up.size });
+    }
+    $('go').textContent = '提交中…';
+    const d = await api('/api/requirements', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_id: +$('project').value, title,
+        description: $('desc').value, type: $('type').value,
+        urgency: $('urgency').value, tags: [...tagSet], attachments
+      })
+    });
+    if (d.ok) { location.href = '/req.html?id=' + d.id; return; }
+    $('err').textContent = d.error || '提交失败';
+  } catch (e) { $('err').textContent = e.message || '网络错误'; }
+  $('go').disabled = false; $('go').textContent = '提 交';
+};
+
+(async function init() {
+  const m = await api('/api/me');
+  if (!m.authed) { location.href = '/login'; return; }
+  const b = await api('/api/bootstrap');
+  $('project').innerHTML = b.projects.map(p => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join('');
+  // 从项目内点「＋新需求」进来时（?project=N）默认选中该项目
+  const up = new URL(location.href).searchParams.get('project');
+  if (up) $('project').value = up;
+  $('tag-list').innerHTML = b.tags.map(t => '<option value="' + esc(t.name) + '">').join('');
+})();
+</script>
+</body>
+</html>

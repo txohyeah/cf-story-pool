@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>需求池</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="topbar">
+  <span class="brand" style="cursor:pointer" onclick="goHome()">📥 需求池</span>
+  <a class="btn primary small" href="/new.html" id="btn-new">＋ 新需求</a>
+  <span class="sp"></span>
+  <span class="sub" id="who"></span>
+  <a class="btn small" href="javascript:openPwdModal()">改密码</a>
+  <a class="btn small" href="javascript:logout()">退出</a>
+</div>
+<div class="wrap">
+
+  <!-- 视图一：项目列表 -->
+  <div id="view-projects" style="display:none">
+    <div class="proj-head">
+      <h2>研发项目</h2>
+      <a class="btn small" href="/index.html?project=all">查看全部需求</a>
+      <button class="btn small" onclick="openProjModal()">＋ 新项目</button>
+    </div>
+    <div class="proj-grid" id="proj-grid"></div>
+  </div>
+
+  <!-- 视图二：需求列表 -->
+  <div id="view-list" style="display:none">
+    <div class="card">
+      <div class="fld-row" style="margin-bottom:10px">
+        <label class="fld" style="min-width:150px"><span>项目</span><select id="f-project"></select></label>
+        <label class="fld" style="min-width:130px"><span>状态</span><select id="f-status">
+          <option value="">全部</option><option value="open">未关闭</option>
+        </select></label>
+        <label class="fld" style="min-width:90px"><span>类型</span><select id="f-type">
+          <option value="">全部</option><option value="bug">Bug</option>
+          <option value="req">需求</option><option value="opt">优化</option>
+        </select></label>
+        <label class="fld" style="min-width:120px"><span>标签</span><select id="f-tag"></select></label>
+        <label class="fld" style="flex:2;min-width:160px"><span>搜索</span>
+          <input type="text" id="f-q" placeholder="标题 / 描述关键词"></label>
+      </div>
+      <div id="list"></div>
+      <div class="pager" id="pager" style="display:none">
+        <a class="btn small" href="javascript:goPage(-1)">上一页</a>
+        <span class="sub" id="pinfo"></span>
+        <a class="btn small" href="javascript:goPage(1)">下一页</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="mywork-card" style="display:none">
+    <h3>🔨 我的工作项（未完成）</h3>
+    <div id="mywork"></div>
+  </div>
+</div>
+
+<!-- 修改密码弹框 -->
+<div class="modal-overlay" id="pwd-overlay" style="display:none">
+  <div class="modal">
+    <h3>修改密码</h3>
+    <label>当前密码<input type="password" id="pw-cur" autocomplete="current-password"></label>
+    <label>新密码（至少 6 位）<input type="password" id="pw-new" autocomplete="new-password"></label>
+    <label>确认新密码<input type="password" id="pw-new2" autocomplete="new-password"></label>
+    <label class="pw-show"><input type="checkbox" id="pw-show" onchange="togglePwShow()"> 显示密码</label>
+    <div class="err" id="pw-err" style="margin:2px 0 0"></div>
+    <div class="modal-btns">
+      <button class="btn" onclick="closePwdModal()">取消</button>
+      <button class="btn primary" id="pw-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 新建项目弹框 -->
+<div class="modal-overlay" id="proj-overlay" style="display:none">
+  <div class="modal">
+    <h3>新建研发项目</h3>
+    <label>项目名称<input type="text" id="proj-name" maxlength="50" placeholder="如：智习岛 P2"></label>
+    <div class="err" id="proj-err" style="margin:2px 0 0"></div>
+    <div class="modal-btns">
+      <button class="btn" onclick="closeProjModal()">取消</button>
+      <button class="btn primary" id="proj-save">创建</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const ST = { submitted:'待复现确认', confirmed:'已确认', scheduled:'已排期', fixed:'已修复',
+  verified:'已验证', closed:'已关闭', dup_closed:'重复关闭' };
+const TY = { bug:'Bug', req:'需求', opt:'优化' };
+let page = 1, pages = 1, me = null;
+const URL_PROJECT = new URL(location.href).searchParams.get('project');
+
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtTime(iso) { if (!iso) return ''; const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
+  return isNaN(d) ? iso : d.toLocaleString('zh-CN', { hour12: false }); }
+function goHome() { location.href = '/index.html'; }
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (r.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+  return r.json();
+}
+
+// ---------- 项目视图 ----------
+async function loadProjects() {
+  const d = await api('/api/projects');
+  $('proj-grid').innerHTML = d.projects.length ? d.projects.map(p =>
+    '<div class="proj-card" onclick="location.href=\'/index.html?project=' + p.id + '\'">'
+    + '<div class="pname">📁 ' + esc(p.name) + '</div>'
+    + '<div class="pstat">进行中 <b>' + p.open + '</b> / 共 ' + p.total + ' 条需求</div>'
+    + '<div class="pgo">进入项目 →</div></div>').join('')
+    : '<div class="card sub" style="text-align:center;padding:30px">还没有项目，点右上角「＋ 新项目」创建</div>';
+}
+function openProjModal() { $('proj-err').textContent = ''; $('proj-name').value = ''; $('proj-overlay').style.display = ''; $('proj-name').focus(); }
+function closeProjModal() { $('proj-overlay').style.display = 'none'; }
+$('proj-save').onclick = async () => {
+  const name = $('proj-name').value.trim();
+  if (!name) { $('proj-err').textContent = '请输入项目名称'; return; }
+  const d = await api('/api/projects', { method: 'POST',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+  if (d.ok) { closeProjModal(); loadProjects(); }
+  else $('proj-err').textContent = d.error || '创建失败';
+};
+$('proj-name').addEventListener('keydown', e => { if (e.key === 'Enter') $('proj-save').click(); });
+
+// ---------- 列表视图 ----------
+function itemHtml(x) {
+  const tags = (x.tags || []).map(t => '<span class="tag-chip">' + esc(t) + '</span>').join('');
+  const tasks = x.open_tasks ? ' <span title="未完成工作项">🔨' + x.open_tasks + '</span>' : '';
+  return '<a class="row-item" href="/req.html?id=' + x.id + '">'
+    + '<div class="ri-top"><span class="rid">#' + x.id + '</span>'
+    + '<span class="ri-title">' + esc(x.title) + '</span>'
+    + (x.urgency === 'urgent' ? '<span class="badge ug-urgent">紧急</span>' : '')
+    + '<span class="badge st-' + x.status + ' clickable" title="点击快捷改状态"'
+    + ' onclick="openStatusMenu(event, ' + x.id + ', \'' + x.status + '\')">'
+    + (ST[x.status] || x.status) + '</span></div>'
+    + '<div class="ri-meta"><span>' + esc(x.project_name) + '</span>'
+    + '<span class="badge ty-' + x.type + '">' + (TY[x.type] || x.type) + '</span>'
+    + tags + tasks
+    + '<span style="margin-left:auto">' + esc(x.creator_name || '') + ' · ' + fmtTime(x.updated_at) + '</span></div></a>';
+}
+
+// ---------- 状态快捷菜单（列表页直接改状态） ----------
+const SM_ORDER = ['submitted', 'confirmed', 'scheduled', 'fixed', 'verified', 'closed'];
+let statusMenuEl = null;
+function closeStatusMenu() {
+  if (statusMenuEl) { statusMenuEl.remove(); statusMenuEl = null; }
+}
+function openStatusMenu(ev, id, cur) {
+  ev.preventDefault(); ev.stopPropagation(); closeStatusMenu();
+  const m = document.createElement('div');
+  m.className = 'status-menu';
+  m.innerHTML = SM_ORDER.map(s =>
+    '<div class="sm-item' + (s === cur ? ' cur' : '') + '" data-s="' + s + '">'
+    + (s === cur ? '✓ ' : '') + ST[s] + '</div>').join('')
+    + '<div class="sm-tip">重复关闭请在详情页操作</div>';
+  document.body.appendChild(m);
+  statusMenuEl = m;
+  const r = ev.target.getBoundingClientRect();
+  const mw = m.offsetWidth, mh = m.offsetHeight;
+  let x = Math.min(r.left, window.innerWidth - mw - 8);
+  let y = r.bottom + 4;
+  if (y + mh > window.innerHeight - 8) y = Math.max(8, r.top - mh - 4);
+  m.style.left = Math.max(8, x) + 'px';
+  m.style.top = y + 'px';
+  m.addEventListener('click', async e => {
+    const s = e.target.dataset && e.target.dataset.s;
+    closeStatusMenu();
+    if (!s || s === cur) return;
+    await api('/api/requirements/' + id, { method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: 'status', status: s, note: '列表页快捷流转' }) });
+    loadList(); loadMyWork();
+  });
+  setTimeout(() => document.addEventListener('click', closeStatusMenu, { once: true }), 0);
+}
+
+async function loadList() {
+  const p = new URLSearchParams();
+  if ($('f-project').value) p.set('project', $('f-project').value);
+  if ($('f-status').value) p.set('status', $('f-status').value);
+  if ($('f-type').value) p.set('type', $('f-type').value);
+  if ($('f-tag').value) p.set('tag', $('f-tag').value);
+  if ($('f-q').value.trim()) p.set('q', $('f-q').value.trim());
+  p.set('page', page);
+  const d = await api('/api/requirements?' + p.toString());
+  pages = d.pages;
+  $('list').innerHTML = d.items.length
+    ? d.items.map(itemHtml).join('')
+    : '<div class="sub" style="padding:20px;text-align:center">没有符合条件的需求</div>';
+  $('pager').style.display = d.total > 0 ? '' : 'none';
+  $('pinfo').textContent = '第 ' + d.page + ' / ' + d.pages + ' 页 · 共 ' + d.total + ' 条';
+}
+
+async function loadMyWork() {
+  const d = await api('/api/my-work');
+  if (!d.items.length) { $('mywork-card').style.display = 'none'; return; }
+  $('mywork-card').style.display = '';
+  $('mywork').innerHTML = d.items.map(c =>
+    '<a class="row-item" href="/req.html?id=' + c.req_id + '">'
+    + '<div class="ri-top"><span class="chk-dot ' + c.status + '"></span>'
+    + '<span class="ri-title">' + esc(c.content) + '</span>'
+    + '<span class="badge st-' + c.req_status + '">' + (ST[c.req_status] || c.req_status) + '</span></div>'
+    + '<div class="ri-meta"><span>#' + c.req_id + ' ' + esc(c.title) + '</span></div></a>').join('');
+}
+
+function goPage(delta) {
+  const np = page + delta;
+  if (np < 1 || np > pages) return;
+  page = np; loadList(); window.scrollTo(0, 0);
+}
+
+// ---------- 改密码弹框 ----------
+function openPwdModal() {
+  $('pw-err').textContent = '';
+  $('pw-cur').value = ''; $('pw-new').value = ''; $('pw-new2').value = '';
+  $('pw-show').checked = false;
+  togglePwShow();
+  $('pwd-overlay').style.display = '';
+  $('pw-cur').focus();
+}
+function closePwdModal() { $('pwd-overlay').style.display = 'none'; }
+function togglePwShow() {
+  const t = $('pw-show').checked ? 'text' : 'password';
+  for (const id of ['pw-cur', 'pw-new', 'pw-new2']) $(id).type = t;
+}
+$('pw-save').onclick = async () => {
+  $('pw-err').textContent = '';
+  const cur = $('pw-cur').value, nxt = $('pw-new').value, nxt2 = $('pw-new2').value;
+  if (!cur) { $('pw-err').textContent = '请输入当前密码'; return; }
+  if (nxt.length < 6) { $('pw-err').textContent = '新密码至少 6 位'; return; }
+  if (nxt !== nxt2) { $('pw-err').textContent = '两次输入的新密码不一致'; return; }
+  $('pw-save').disabled = true;
+  try {
+    const d = await api('/api/me/password', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current: cur, next: nxt }) });
+    if (d.ok) { closePwdModal(); alert('密码已修改，其他设备已退出'); return; }
+    $('pw-err').textContent = d.error || '修改失败';
+  } catch (e) { $('pw-err').textContent = '网络错误'; }
+  $('pw-save').disabled = false;
+};
+for (const id of ['pw-new', 'pw-new2']) {
+  $(id).addEventListener('keydown', e => { if (e.key === 'Enter') $('pw-save').click(); });
+}
+
+async function logout() { await api('/api/logout', { method: 'POST' }); location.href = '/login'; }
+
+let debTimer = null;
+$('f-q').addEventListener('input', () => {
+  clearTimeout(debTimer);
+  debTimer = setTimeout(() => { page = 1; loadList(); }, 400);
+});
+for (const id of ['f-project', 'f-status', 'f-type', 'f-tag']) {
+  $(id).addEventListener('change', () => { page = 1; loadList(); });
+}
+
+(async function init() {
+  // me 与 bootstrap 并行，省一个往返
+  const pBoot = api('/api/bootstrap');
+  const m = await api('/api/me');
+  if (!m.authed) { location.href = '/login'; return; }
+  me = m;
+  $('who').textContent = m.display_name;
+  const b = await pBoot;
+  $('f-project').innerHTML = '<option value="">全部项目</option>'
+    + b.projects.map(p => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join('');
+  $('f-status').innerHTML += ['submitted','confirmed','scheduled','fixed','verified','closed','dup_closed']
+    .map(s => '<option value="' + s + '">' + ST[s] + '</option>').join('');
+  $('f-tag').innerHTML = '<option value="">全部</option>'
+    + b.tags.map(t => '<option value="' + esc(t.name) + '">' + esc(t.name) + '</option>').join('');
+
+  loadMyWork();
+  if (URL_PROJECT) {
+    // 列表模式：URL 指定项目（all = 全部）
+    $('view-list').style.display = '';
+    if (URL_PROJECT !== 'all') $('f-project').value = URL_PROJECT;
+    $('btn-new').href = URL_PROJECT !== 'all' ? '/new.html?project=' + URL_PROJECT : '/new.html';
+    loadList();
+  } else {
+    // 项目视图
+    $('view-projects').style.display = '';
+    loadProjects();
+  }
+})();
+</script>
+</body>
+</html>

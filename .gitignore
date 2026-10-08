@@ -1,4 +1,7 @@
-dist/
+dist/_worker.js
 scripts/__pycache__/
 *.pyc
 .DS_Store
+data/cleanup_dup.sql
+data/reset_pw.sql
+data/import_v15_state.json
