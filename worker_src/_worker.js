@@ -687,9 +687,11 @@ export default {
       return json({ error: '未找到' }, 404);
     }
 
-    // 白名单静态：登录页 + 图标
+    // 白名单静态：登录页 + 样式表 + 图标（style.css 必须匿名可达，否则登录页裸奔）
     if (p === '/login' || p === '/login.html') return serveStatic(url.origin + '/login.html', env);
-    if (p === '/favicon.svg' || p === '/favicon.ico' || p === '/robots.txt') return serveStatic(url.origin + p, env);
+    if (p === '/favicon.svg' || p === '/favicon.ico' || p === '/robots.txt' || p === '/style.css') {
+      return serveStatic(url.origin + p, env);
+    }
 
     // 其余页面：必须登录
     const u = await currentUser(request, env);
