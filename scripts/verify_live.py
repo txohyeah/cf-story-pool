@@ -228,7 +228,41 @@ def main():
     s3, d3 = jreq('GET', '/api/requirements/%d' % aid, cookie=cookie)
     check('测试单清理', d1.get('ok') and d2.get('ok') and s3 == 404)
 
-    # 17. cookie 文件（pw.py 核对用）
+    # 17. 项目统计接口（首页项目卡片数据源）
+    s, d = jreq('GET', '/api/projects', cookie=cookie)
+    pj = {p['name']: p for p in d.get('projects', [])}
+    check('项目统计接口含 be-trial 且带 total/open',
+          'be-trial' in pj and isinstance(pj['be-trial'].get('total'), int)
+          and isinstance(pj['be-trial'].get('open'), int))
+
+    # 18. 项目创建 + 有需求项目禁删 + 空项目可删（闭环不留脏数据）
+    s, d = jreq('POST', '/api/projects', {'name': '[verify] 自检项目'}, cookie=cookie)
+    vpid = d.get('id')
+    if not (s == 200 and d.get('ok')):
+        # 网络抖动下 POST 可能「服务端已成功但响应读超时」，兜底按名字查回
+        s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
+        found = [p for p in d2.get('projects', []) if p['name'] == '[verify] 自检项目']
+        vpid = found[0]['id'] if found else None
+    check('项目创建', bool(vpid))
+    s, d = jreq('POST', '/api/projects', {'name': '[verify] 自检项目'}, cookie=cookie)
+    check('项目重名拦截', s == 400)
+    if vpid:
+        s, d = jreq('POST', '/api/requirements', {
+            'project_id': vpid, 'title': '[verify] 项目禁删探针', 'tags': ['verify自检']}, cookie=cookie)
+        probe_id = d.get('id')
+        s, d = jreq('DELETE', '/api/projects/%d' % vpid, cookie=cookie)
+        check('有需求项目禁删', s == 400)
+        if probe_id:
+            s, d = jreq('DELETE', '/api/requirements/%d' % probe_id, cookie=cookie)
+        s, d = jreq('DELETE', '/api/projects/%d' % vpid, cookie=cookie)
+        s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
+        gone = not any(p['id'] == vpid for p in d2.get('projects', []))
+        check('空项目删除闭环', d.get('ok') and gone)
+    else:
+        check('有需求项目禁删', False, 'vpid 缺失，无法执行')
+        check('空项目删除闭环', False, 'vpid 缺失，无法执行')
+
+    # 19. cookie 文件（pw.py 核对用）
     fd = os.open(COOKIE_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     os.write(fd, ('%s=%s' % (COOKIE_NAME, cookie.split('=', 1)[1])).encode())
     os.close(fd)

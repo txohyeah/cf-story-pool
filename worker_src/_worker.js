@@ -210,6 +210,36 @@ async function changeMyPassword(request, env, u) {
   return json({ ok: true });
 }
 
+// ---------- 项目：统计列表 / 创建 / 删除（仅空项目） ----------
+async function apiProjectList(request, env) {
+  const rows = (await env.DB.prepare(
+    `SELECT p.id, p.name,
+            COUNT(r.id) AS total,
+            COALESCE(SUM(CASE WHEN r.status NOT IN ('closed','dup_closed') THEN 1 ELSE 0 END), 0) AS open
+     FROM projects p LEFT JOIN requirements r ON r.project_id = p.id
+     WHERE p.is_active = 1
+     GROUP BY p.id ORDER BY p.id`).all()).results;
+  return json({ ok: true, projects: rows });
+}
+async function apiProjectCreate(request, env) {
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const name = (body.name || '').trim().slice(0, 50);
+  if (!name) return json({ error: '项目名称必填' }, 400);
+  const dup = await env.DB.prepare('SELECT id FROM projects WHERE name = ?').bind(name).first();
+  if (dup) return json({ error: '项目已存在' }, 400);
+  const ins = await env.DB.prepare('INSERT INTO projects (name, is_active) VALUES (?, 1)').bind(name).run();
+  return json({ ok: true, id: ins.meta.last_row_id, name });
+}
+async function apiProjectDelete(request, env, id) {
+  const p = await env.DB.prepare('SELECT id FROM projects WHERE id = ?').bind(id).first();
+  if (!p) return json({ error: '项目不存在' }, 404);
+  const n = (await env.DB.prepare('SELECT COUNT(*) AS n FROM requirements WHERE project_id = ?').bind(id).first()).n;
+  if (n > 0) return json({ error: '项目下仍有需求，不能删除' }, 400);
+  await env.DB.prepare('DELETE FROM projects WHERE id = ?').bind(id).run();
+  return json({ ok: true });
+}
+
 // ---------- 字典 ----------
 async function apiBootstrap(request, env) {
   const projects = (await env.DB.prepare(
@@ -660,6 +690,10 @@ export default {
       if (p === '/api/me') return apiMe(request, env);
       if (p === '/api/me/password' && method === 'POST') return changeMyPassword(request, env, u);
       if (p === '/api/bootstrap') return apiBootstrap(request, env);
+      if (p === '/api/projects' && method === 'GET') return apiProjectList(request, env);
+      if (p === '/api/projects' && method === 'POST') return apiProjectCreate(request, env);
+      const pm = p.match(/^\/api\/projects\/(\d+)$/);
+      if (pm && method === 'DELETE') return apiProjectDelete(request, env, parseInt(pm[1], 10));
       if (p === '/api/tags' && method === 'GET') return apiTagList(request, env);
       if (p === '/api/my-work') return apiMyWork(request, env, u);
       if (p === '/api/dedup-suggest') return apiDedup(request, env);
