@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>需求详情 · 需求池</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="topbar">
+  <span class="brand">📥 需求池 · 详情</span>
+  <span class="sp"></span>
+  <a class="btn small" href="javascript:history.length>1?history.back():location.href='/'">返回</a>
+</div>
+<div class="wrap" style="max-width:860px">
+  <div class="card" id="info"></div>
+
+  <div class="card" id="edit-card" style="display:none">
+    <h3>✏️ 编辑</h3>
+    <label class="fld"><span>标题</span><input type="text" id="e-title" maxlength="200"></label>
+    <label class="fld"><span>描述 / 复现步骤</span><textarea id="e-desc" rows="5"></textarea></label>
+    <div class="fld-row">
+      <label class="fld"><span>项目</span><select id="e-project"></select></label>
+      <label class="fld"><span>类型</span><select id="e-type">
+        <option value="req">需求</option><option value="bug">Bug</option><option value="opt">优化</option>
+      </select></label>
+      <label class="fld"><span>紧急度</span><select id="e-urgency">
+        <option value="normal">普通</option><option value="urgent">紧急</option>
+      </select></label>
+    </div>
+    <button class="btn primary" id="e-save">保存修改</button>
+    <div class="err" id="e-err"></div>
+  </div>
+
+  <div class="card">
+    <h3>🔁 状态流转</h3>
+    <div class="fld-row" style="align-items:flex-end">
+      <label class="fld" style="min-width:150px"><span>移动到</span><select id="s-next"></select></label>
+      <label class="fld" style="flex:1;min-width:140px"><span>备注（可选）</span><input type="text" id="s-note" maxlength="200"></label>
+      <button class="btn primary" id="s-go">流转</button>
+    </div>
+    <div id="dup-row" style="display:none;margin-top:8px">
+      <label class="fld"><span>原单 ID（本条与之重复）</span>
+        <input type="text" id="s-dup" inputmode="numeric" placeholder="输入原单编号，如 12"></label>
+    </div>
+    <div class="err" id="s-err"></div>
+  </div>
+
+  <div class="card">
+    <h3>🏷️ 标签</h3>
+    <div id="tags"></div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <input type="text" id="tag-in" list="tag-list" placeholder="输入标签" style="flex:1">
+      <datalist id="tag-list"></datalist>
+      <button class="btn small" id="tag-add">添加标签</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>🔨 工作项清单（接力顺序 = 行顺序）</h3>
+    <div id="chk"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
+      <input type="text" id="ck-content" placeholder="工作内容，如：后端开发" style="flex:1;min-width:150px">
+      <select id="ck-assignee" style="width:auto"></select>
+      <button class="btn small" id="ck-add">添加工作项</button>
+    </div>
+  </div>
+
+  <div class="card" id="att-card" style="display:none">
+    <h3>🖼️ 截图附件</h3>
+    <div id="atts" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+  </div>
+
+  <div class="card">
+    <h3>💬 评论</h3>
+    <textarea id="c-text" rows="3" placeholder="补充信息、确认结果…"></textarea>
+    <div style="margin-top:8px"><button class="btn primary small" id="c-go">发送评论</button></div>
+  </div>
+
+  <div class="card">
+    <h3>📜 流水</h3>
+    <div id="events"></div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+const ST = { submitted:'待复现确认', confirmed:'已确认', scheduled:'已排期', fixed:'已修复',
+  verified:'已验证', closed:'已关闭', dup_closed:'重复关闭' };
+const TY = { bug:'Bug', req:'需求', opt:'优化' };
+const CK = { todo:'', doing:'', done:'' };
+const ACTN = { create:'📥 创建', status:'🔁 流转', comment:'💬 评论', checklist:'🔨 清单',
+  tag:'🏷️ 标签', edit:'✏️ 编辑' };
+const REQ_ID = parseInt(new URL(location.href).searchParams.get('id'), 10);
+let D = null, me = null, users = [];
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (r.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+  return r.json();
+}
+function fmtTime(iso) { if (!iso) return ''; const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
+  return isNaN(d) ? iso : d.toLocaleString('zh-CN', { hour12: false }); }
+
+function renderInfo() {
+  const r = D.req;
+  const dup = D.dup_of
+    ? '<div style="margin-top:6px">↩️ 重复单，原单：<a href="/req.html?id=' + D.dup_of.id + '">#' + D.dup_of.id
+      + ' ' + esc(D.dup_of.title) + '</a></div>' : '';
+  $('info').innerHTML =
+    '<div class="ri-top"><span class="rid">#' + r.id + '</span>'
+    + '<span class="ri-title" style="font-size:17px">' + esc(r.title) + '</span>'
+    + (r.urgency === 'urgent' ? '<span class="badge ug-urgent">紧急</span>' : '')
+    + '<span class="badge st-' + r.status + '">' + (ST[r.status] || r.status) + '</span></div>'
+    + '<div class="ri-meta" style="margin-top:6px">'
+    + '<span>' + esc(r.project_name) + '</span>'
+    + '<span class="badge ty-' + r.type + '">' + (TY[r.type] || r.type) + '</span>'
+    + '<span>提单：' + esc(r.creator_name || '-') + '</span>'
+    + '<span>' + fmtTime(r.created_at) + '</span>'
+    + '<span>通道：' + esc(r.channel) + '</span></div>'
+    + (r.description ? '<div style="margin-top:10px;white-space:pre-wrap">' + esc(r.description) + '</div>' : '')
+    + dup
+    + '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">'
+    + '<button class="btn small" id="btn-edit">编辑</button>'
+    + '<button class="btn small danger" id="btn-del">删除</button></div>';
+  $('btn-edit').onclick = () => {
+    $('edit-card').style.display = $('edit-card').style.display === 'none' ? '' : 'none';
+  };
+  $('btn-del').onclick = async () => {
+    if (!confirm('确定删除需求 #' + r.id + '？不可恢复')) return;
+    if (!confirm('再次确认：删除后截图附件一并清除')) return;
+    await api('/api/requirements/' + r.id, { method: 'DELETE' });
+    location.href = '/';
+  };
+}
+
+function renderStatus() {
+  const cur = D.req.status;
+  const opts = Object.keys(ST).filter(s => s !== cur)
+    .map(s => '<option value="' + s + '">' + ST[s] + '</option>').join('');
+  $('s-next').innerHTML = opts;
+  $('dup-row').style.display = 'none';
+}
+$('s-next').addEventListener('change', () => {
+  $('dup-row').style.display = $('s-next').value === 'dup_closed' ? '' : 'none';
+});
+$('s-go').onclick = async () => {
+  $('s-err').textContent = '';
+  const to = $('s-next').value;
+  if (!to) { $('s-err').textContent = '请选择目标状态'; return; }
+  const body = { op: 'status', status: to, note: $('s-note').value };
+  if (to === 'dup_closed') {
+    const t = parseInt($('s-dup').value, 10);
+    if (!t) { $('s-err').textContent = '请填原单 ID'; return; }
+    body.duplicate_of = t;
+  }
+  const d = await api('/api/requirements/' + REQ_ID, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (d.ok) load(); else { $('s-err').textContent = d.error || '失败'; }
+};
+
+function renderTags() {
+  const cur = D.tags.map(t => t.name);
+  $('tags').innerHTML = cur.map(t =>
+    '<span class="tag-chip">' + esc(t) + '<span class="x" data-t="' + esc(t) + '">✕</span></span>').join('')
+    || '<span class="sub">暂无标签</span>';
+}
+$('tags').addEventListener('click', e => {
+  if (!e.target.classList.contains('x')) return;
+  const next = D.tags.map(t => t.name).filter(t => t !== e.target.dataset.t);
+  saveTags(next);
+});
+$('tag-add').onclick = () => {
+  const v = $('tag-in').value.trim().slice(0, 30);
+  if (!v) return;
+  const cur = D.tags.map(t => t.name);
+  if (!cur.includes(v)) cur.push(v);
+  $('tag-in').value = '';
+  saveTags(cur);
+};
+async function saveTags(names) {
+  const d = await api('/api/requirements/' + REQ_ID, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'tags', tags: names }) });
+  if (d.ok) load();
+}
+
+function renderChk() {
+  $('chk').innerHTML = D.checklist.length ? D.checklist.map(c => {
+    const opts = ['<option value="">未指派</option>']
+      .concat(users.map(us => '<option value="' + us.id + '"'
+        + (c.assignee_id === us.id ? ' selected' : '') + '>' + esc(us.display_name) + '</option>'));
+    return '<div class="chk-row ' + c.status + '">'
+      + '<span class="chk-dot ' + c.status + '" data-id="' + c.id + '" title="点击切换 待办→进行中→完成">'
+      + (c.status === 'done' ? '✓' : '') + '</span>'
+      + '<span class="ct">' + esc(c.content) + '</span>'
+      + '<select data-id="' + c.id + '" class="ck-as">' + opts.join('') + '</select>'
+      + '<span class="sub" style="cursor:pointer" data-del="' + c.id + '">✕</span></div>';
+  }).join('') : '<div class="sub">还没有工作项。建议按顺序拆：产品设计 → 前端开发 → 后端开发</div>';
+}
+$('chk').addEventListener('click', async e => {
+  if (e.target.classList.contains('chk-dot')) {
+    const to = e.target.classList.contains('todo') ? 'doing'
+      : e.target.classList.contains('doing') ? 'done' : 'todo';
+    await api('/api/checklist/' + e.target.dataset.id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: to }) });
+    load();
+  } else if (e.target.dataset.del) {
+    if (!confirm('删除该工作项？')) return;
+    await api('/api/checklist/' + e.target.dataset.del, { method: 'DELETE' });
+    load();
+  }
+});
+$('chk').addEventListener('change', async e => {
+  if (e.target.classList.contains('ck-as')) {
+    await api('/api/checklist/' + e.target.dataset.id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assignee_id: e.target.value || null }) });
+    load();
+  }
+});
+$('ck-add').onclick = async () => {
+  const content = $('ck-content').value.trim();
+  if (!content) return;
+  await api('/api/requirements/' + REQ_ID + '/checklist', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, assignee_id: $('ck-assignee').value || null }) });
+  $('ck-content').value = '';
+  load();
+};
+
+function renderAtts() {
+  if (!D.attachments.length) return;
+  $('att-card').style.display = '';
+  $('atts').innerHTML = D.attachments.map(a =>
+    '<a href="/api/files/' + a.r2_key + '" target="_blank" style="text-align:center">'
+    + '<img class="thumb" src="/api/files/' + a.r2_key + '">'
+    + '<div class="sub" style="font-size:11px;max-width:88px;overflow:hidden;text-overflow:ellipsis">'
+    + esc(a.orig_name || '图片') + '</div></a>').join('');
+}
+
+function renderEvents() {
+  const CN = { todo: '待办', doing: '进行中', done: '完成' };
+  $('events').innerHTML = D.events.map(e => {
+    let body = '';
+    let j = null;
+    try { j = JSON.parse(e.detail); } catch (x) { j = null; }
+    if (e.action === 'comment') body = '<div class="body">' + esc(e.detail) + '</div>';
+    else if (e.action === 'status' && j) {
+      body = (j.from ? (ST[j.from] || j.from) + ' → ' : '')
+        + '<b>' + (ST[j.to] || j.to) + '</b>' + (j.note ? '：' + esc(j.note) : '');
+    } else if (e.action === 'checklist' && j) {
+      body = j.op === 'add' ? '添加：' + esc(j.content)
+        : j.op === 'delete' ? '删除：' + esc(j.content)
+        : esc(j.content || '') + ' ' + (CN[j.from] || j.from || '') + ' → ' + (CN[j.to] || j.to || '');
+    } else if (e.action === 'tag' && j) {
+      body = (j.tags || []).map(t => esc(t)).join('、');
+    } else if (e.action === 'create') {
+      body = '';
+    } else {
+      body = esc(e.detail);
+    }
+    return '<div class="evt"><span class="who">' + esc(e.actor_name || '-') + '</span>'
+      + '<span>' + (ACTN[e.action] || e.action) + '</span>'
+      + '<span class="when">' + fmtTime(e.created_at) + '</span>'
+      + (body ? '<div>' + body + '</div>' : '') + '</div>';
+  }).join('');
+}
+
+$('e-save').onclick = async () => {
+  $('e-err').textContent = '';
+  const d = await api('/api/requirements/' + REQ_ID, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'edit', title: $('e-title').value, description: $('e-desc').value,
+      type: $('e-type').value, urgency: $('e-urgency').value, project_id: $('e-project').value }) });
+  if (d.ok) { $('edit-card').style.display = 'none'; load(); }
+  else $('e-err').textContent = d.error || '失败';
+};
+$('c-go').onclick = async () => {
+  const text = $('c-text').value.trim();
+  if (!text) return;
+  const d = await api('/api/requirements/' + REQ_ID + '/comment', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }) });
+  if (d.ok) { $('c-text').value = ''; load(); }
+};
+
+async function load() {
+  D = await api('/api/requirements/' + REQ_ID);
+  if (!D.ok) { document.body.innerHTML = '<div class="wrap"><div class="card">' + esc(D.error) + '</div></div>'; return; }
+  renderInfo(); renderStatus(); renderTags(); renderChk(); renderAtts(); renderEvents();
+}
+
+(async function init() {
+  if (!REQ_ID) { document.body.innerHTML = '<div class="wrap"><div class="card">缺少 id 参数</div></div>'; return; }
+  // 三个请求并行发出（原来串行等 3 个往返，是详情页慢的主因）
+  const pDetail = api('/api/requirements/' + REQ_ID).then(d => { D = d; return d; });
+  const pBoot = api('/api/bootstrap');
+  const m = await api('/api/me');
+  if (!m.authed) { location.href = '/login'; return; }
+  me = m;
+  const b = await pBoot;
+  users = b.users;
+  $('e-project').innerHTML = b.projects.map(p => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join('');
+  $('tag-list').innerHTML = b.tags.map(t => '<option value="' + esc(t.name) + '">').join('');
+  $('ck-assignee').innerHTML = '<option value="">未指派</option>'
+    + users.map(us => '<option value="' + us.id + '">' + esc(us.display_name) + '</option>').join('');
+  await pDetail;
+  if (!D.ok) { document.body.innerHTML = '<div class="wrap"><div class="card">' + esc(D.error) + '</div></div>'; return; }
+  renderInfo(); renderStatus(); renderTags(); renderChk(); renderAtts(); renderEvents();
+})();
+</script>
+</body>
+</html>

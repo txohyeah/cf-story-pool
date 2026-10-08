@@ -430,26 +430,29 @@ async function apiReqDetail(request, env, u, id) {
      LEFT JOIN users us ON us.id = r.created_by
      WHERE r.id = ?`).bind(id).first());
   if (!r) return json({ error: '需求不存在' }, 404);
-  const tags = (await env.DB.prepare(
-    `SELECT t.id, t.name FROM requirement_tags rt JOIN tags t ON t.id = rt.tag_id
-     WHERE rt.req_id = ? ORDER BY t.name`).bind(id).all()).results;
-  const attachments = (await env.DB.prepare(
-    `SELECT id, store_key, orig_name, size, created_at FROM attachments
-     WHERE req_id = ? ORDER BY id`).bind(id).all()).results;
-  const checklist = (await env.DB.prepare(
-    `SELECT c.id, c.content, c.status, c.sort_order, c.assignee_id, us.display_name AS assignee_name
-     FROM checklist_items c LEFT JOIN users us ON us.id = c.assignee_id
-     WHERE c.req_id = ? ORDER BY c.sort_order, c.id`).bind(id).all()).results;
-  const events = (await env.DB.prepare(
-    `SELECT e.id, e.action, e.detail, e.created_at, us.display_name AS actor_name
-     FROM events e LEFT JOIN users us ON us.id = e.actor_id
-     WHERE e.req_id = ? ORDER BY e.created_at ASC, e.id ASC`).bind(id).all()).results;
-  let dupOf = null;
-  if (r.duplicate_of) {
-    dupOf = (await env.DB.prepare('SELECT id, title, status FROM requirements WHERE id = ?')
-      .bind(r.duplicate_of).first());
-  }
-  return json({ ok: true, req: r, tags, attachments, checklist, events, dup_of: dupOf });
+  // 互不依赖的 5 路查询并行（原串行 5 次 D1 往返，是详情页慢的主因之一）
+  const [tagsR, attsR, ckR, evR, dupOf] = await Promise.all([
+    env.DB.prepare(
+      `SELECT t.id, t.name FROM requirement_tags rt JOIN tags t ON t.id = rt.tag_id
+       WHERE rt.req_id = ? ORDER BY t.name`).bind(id).all(),
+    env.DB.prepare(
+      `SELECT id, store_key, orig_name, size, created_at FROM attachments
+       WHERE req_id = ? ORDER BY id`).bind(id).all(),
+    env.DB.prepare(
+      `SELECT c.id, c.content, c.status, c.sort_order, c.assignee_id, us.display_name AS assignee_name
+       FROM checklist_items c LEFT JOIN users us ON us.id = c.assignee_id
+       WHERE c.req_id = ? ORDER BY c.sort_order, c.id`).bind(id).all(),
+    env.DB.prepare(
+      `SELECT e.id, e.action, e.detail, e.created_at, us.display_name AS actor_name
+       FROM events e LEFT JOIN users us ON us.id = e.actor_id
+       WHERE e.req_id = ? ORDER BY e.created_at ASC, e.id ASC`).bind(id).all(),
+    r.duplicate_of
+      ? env.DB.prepare('SELECT id, title, status FROM requirements WHERE id = ?')
+          .bind(r.duplicate_of).first()
+      : Promise.resolve(null)
+  ]);
+  return json({ ok: true, req: r, tags: tagsR.results, attachments: attsR.results,
+    checklist: ckR.results, events: evR.results, dup_of: dupOf });
 }
 
 // ---------- 编辑/流转 ----------

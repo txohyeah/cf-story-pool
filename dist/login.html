@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 需求池</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+body.login-bg { min-height: 100vh; margin: 0; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(160deg, #eff6ff 0%, #f8fafc 45%, #f5f3ff 100%); }
+.login-card { width: 360px; max-width: calc(100vw - 32px); background: #fff; border-radius: 18px;
+  box-shadow: 0 12px 48px rgba(30, 41, 59, .10), 0 2px 8px rgba(30, 41, 59, .05);
+  padding: 36px 32px 24px; border: 1px solid rgba(226, 232, 240, .8); }
+.login-logo { font-size: 44px; text-align: center; line-height: 1; }
+.login-title { text-align: center; font-size: 21px; font-weight: 700; color: #0f172a; margin: 10px 0 2px; }
+.login-sub { text-align: center; font-size: 13px; color: #94a3b8; margin: 0 0 24px; }
+.login-card input[type=text], .login-card input[type=password] {
+  width: 100%; border: 1.5px solid #e2e8f0; border-radius: 10px; padding: 11px 13px;
+  font-size: 15px; outline: none; background: #f8fafc; box-sizing: border-box;
+  transition: border-color .15s, box-shadow .15s; }
+.login-card input:focus { border-color: #2563eb; background: #fff;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
+.login-btn { width: 100%; margin-top: 18px; border: none; border-radius: 10px; padding: 12px;
+  font-size: 15px; font-weight: 600; color: #fff; cursor: pointer;
+  background: linear-gradient(135deg, #2563eb, #4f46e5); transition: opacity .15s, transform .05s; }
+.login-btn:hover { opacity: .92; }
+.login-btn:active { transform: scale(.985); }
+.login-btn[disabled] { opacity: .6; cursor: wait; }
+.login-err { color: #dc2626; font-size: 13px; text-align: center; margin-top: 12px; min-height: 18px; }
+.login-foot { text-align: center; font-size: 12px; color: #cbd5e1; margin-top: 14px; }
+</style>
+</head>
+<body class="login-bg">
+<div class="login-card">
+  <div class="login-logo">📥</div>
+  <div class="login-title">需求池</div>
+  <p class="login-sub">现场需求与缺陷回流</p>
+  <input type="text" id="u" placeholder="用户名" autocomplete="username">
+  <div style="height:12px"></div>
+  <input type="password" id="p" placeholder="密码" autocomplete="current-password">
+  <button class="login-btn" id="go">登 录</button>
+  <div class="login-err" id="err"></div>
+  <div class="login-foot">cf-story-pool</div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+async function login() {
+  $('err').textContent = '';
+  $('go').disabled = true;
+  try {
+    const r = await fetch('/api/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: $('u').value.trim(), password: $('p').value })
+    });
+    const d = await r.json();
+    if (r.ok && d.ok) { location.href = '/'; return; }
+    $('err').textContent = d.error || ('登录失败 ' + r.status);
+  } catch (e) { $('err').textContent = '网络错误，请重试'; }
+  $('go').disabled = false;
+}
+$('go').onclick = login;
+$('p').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+$('u').addEventListener('keydown', e => { if (e.key === 'Enter') $('p').focus(); });
+</script>
+</body>
+</html>
