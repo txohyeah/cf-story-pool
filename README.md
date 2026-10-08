@@ -1,6 +1,6 @@
 # cf-story-pool 需求池
 
-现场需求与缺陷回流池。CF Pages + D1，附件存 D1 BLOB（R2 预留，token 无 R2 权限暂未启用）。
+现场需求与缺陷回流池。CF Pages + D1，附件存 D1 BLOB（**定案 2026-10-08：不开 R2**——用户无国外信用卡无法开通，D1 免费额度 5GB 对本场景充足）。
 部署：https://cf-story-pool.pages.dev （全站门禁，登录后可见；站点名与仓库同名）
 
 ## 账号
@@ -12,7 +12,7 @@
 - `worker_src/_worker.js` → `dist/_worker.js` — 全站门禁 + API（login/logout/me/me-password/bootstrap/tags/my-work/dedup-suggest/upload/files/requirements CRUD/comment/checklist）
 - `dist/` — index.html（列表+筛选+我的工作项+分页）、new.html（提单：项目/类型/紧急度/标签/截图压缩/去重提示）、req.html（详情/状态流转/编辑/标签/工作项清单/附件/评论/流水）、login.html、style.css
 - `scripts/cf_d1.py` — D1 桥接（create-bound/exec/query/info）
-- `scripts/cf_r2.py` — R2 建桶+绑定（**预留**：当前 API token 无 R2 权限；开了权限可直接跑 create-bound，再把 worker 的 upload/files 两函数切回 R2）
+- `scripts/cf_r2.py` — R2 建桶+绑定（**已废弃不用**：R2 定案不开；脚本保留备查）
 - `scripts/seed_users.py` — 用户种子（读 .secrets，输出仅含 PBKDF2 哈希；**重跑会使这些账号所有会话失效**）
 - `scripts/verify_live.py` — 线上功能自检（带浏览器 UA 否则 CF 403；17 项断言：门禁/登录/建单/去重/流转/清单/评论/标签/附件上传下载/重复关闭/删除清理；结尾自动更新 pw.py 核对用 cookie）
 
