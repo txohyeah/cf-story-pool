@@ -105,6 +105,10 @@ def main():
     s, _h, raw = http('GET', '/api/health')
     check('health 200', s == 200 and _json.loads(raw).get('ok') is True)
 
+    # 1b. 匿名静态资源：style.css 必须匿名可达（否则登录页裸奔）
+    s, h, _raw = http('GET', '/style.css')
+    check('匿名 /style.css 200', s == 200 and 'text/css' in h.get('Content-Type', ''))
+
     # 2. 匿名门禁：302 → /login
     s, h, _raw = http('GET', '/')
     loc = h.get('Location', '')
