@@ -295,6 +295,7 @@ for (const id of ['f-project', 'f-status', 'f-type', 'f-tag']) {
     + b.projects.map(p => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join('');
   $('f-status').innerHTML += ['submitted','confirmed','scheduled','fixed','verified','closed','dup_closed']
     .map(s => '<option value="' + s + '">' + ST[s] + '</option>').join('');
+  $('f-status').value = 'open'; // 默认只看未关闭
   $('f-tag').innerHTML = '<option value="">全部</option>'
     + b.tags.map(t => '<option value="' + esc(t.name) + '">' + esc(t.name) + '</option>').join('');
 
