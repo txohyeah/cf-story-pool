@@ -330,11 +330,10 @@ async function apiReqCreate(request, env, u) {
 }
 
 // ---------- 列表 ----------
-function ftsQuery(q) {
-  const tokens = String(q || '').trim().split(/\s+/).filter(Boolean)
-    .map(t => '"' + t.replace(/"/g, '') + '"');
-  return tokens.join(' OR ');
-}
+// 中文搜索：FTS5 默认 unicode61 分词器把连续中文整段当一个 token，子串搜不到（如搜"药杯"命中不了"药杯打印加条件"）。
+// 数据量小（百条级），直接用 LIKE 子串匹配；FTS 表与触发器保留但不走查询路径。
+function likeEsc(t) { return '%' + String(t).replace(/[\\%_]/g, c => '\\' + c) + '%'; }
+function qTokens(q) { return String(q || '').trim().split(/\s+/).filter(Boolean).slice(0, 8); }
 async function apiReqList(request, env, u) {
   const url = new URL(request.url);
   const page = Math.max(1, parseInt(url.searchParams.get('page'), 10) || 1);
@@ -362,9 +361,12 @@ async function apiReqList(request, env, u) {
   }
   const q = (url.searchParams.get('q') || '').trim();
   if (q) {
-    const fq = ftsQuery(q);
-    if (fq) { where.push('r.id IN (SELECT rowid FROM requirements_fts WHERE requirements_fts MATCH ?)'); args.push(fq); }
-    else { where.push('0 = 1'); }
+    const tokens = qTokens(q);
+    if (tokens.length) {
+      where.push('(' + tokens.map(() =>
+        `(r.title LIKE ? ESCAPE '\\' OR r.description LIKE ? ESCAPE '\\')`).join(' OR ') + ')');
+      for (const t of tokens) { const like = likeEsc(t); args.push(like, like); }
+    } else { where.push('0 = 1'); }
   }
   const assignee = url.searchParams.get('assignee');
   if (assignee === 'me') {
@@ -662,17 +664,19 @@ async function apiFileGet(request, env, token) {
   return new Response(d, { status: 200, headers: h });
 }
 
-// ---------- 去重提示（FTS5） ----------
+// ---------- 去重提示（LIKE 子串） ----------
 async function apiDedup(request, env) {
   const url = new URL(request.url);
-  const fq = ftsQuery(url.searchParams.get('q') || '');
-  if (!fq) return json({ ok: true, items: [] });
+  const tokens = qTokens(url.searchParams.get('q') || '');
+  if (!tokens.length) return json({ ok: true, items: [] });
+  const args = [];
+  for (const t of tokens) { const like = likeEsc(t); args.push(like, like); }
   const items = (await env.DB.prepare(
     `SELECT r.id, r.title, r.status, r.type, r.urgency, p.name AS project_name
-     FROM requirements_fts f JOIN requirements r ON r.id = f.rowid
-     JOIN projects p ON p.id = r.project_id
-     WHERE requirements_fts MATCH ? AND r.status NOT IN ('closed','dup_closed')
-     ORDER BY rank LIMIT 5`).bind(fq).all()).results;
+     FROM requirements r JOIN projects p ON p.id = r.project_id
+     WHERE (${tokens.map(() => `(r.title LIKE ? ESCAPE '\\' OR r.description LIKE ? ESCAPE '\\')`).join(' OR ')})
+       AND r.status NOT IN ('closed','dup_closed')
+     ORDER BY r.updated_at DESC LIMIT 5`).bind(...args).all()).results;
   return json({ ok: true, items });
 }
 
