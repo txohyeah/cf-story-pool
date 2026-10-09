@@ -27,34 +27,35 @@
     <div class="proj-grid" id="proj-grid"></div>
   </div>
 
-  <!-- 视图二：需求列表 -->
+  <!-- 视图二：需求列表（宽屏双栏：左=我的工作项 sticky，右=需求列表） -->
   <div id="view-list" style="display:none">
-    <div class="card">
-      <div class="fld-row" style="margin-bottom:10px">
-        <label class="fld" style="min-width:150px"><span>项目</span><select id="f-project"></select></label>
-        <label class="fld" style="min-width:130px"><span>状态</span><select id="f-status">
-          <option value="">全部</option><option value="open">未关闭</option>
-        </select></label>
-        <label class="fld" style="min-width:90px"><span>类型</span><select id="f-type">
-          <option value="">全部</option><option value="bug">Bug</option>
-          <option value="req">需求</option><option value="opt">优化</option>
-        </select></label>
-        <label class="fld" style="min-width:120px"><span>标签</span><select id="f-tag"></select></label>
-        <label class="fld" style="flex:2;min-width:160px"><span>搜索</span>
-          <input type="text" id="f-q" placeholder="标题 / 描述关键词"></label>
+    <div class="list-layout">
+      <div class="card side-work" id="mywork-card" style="display:none">
+        <h3>🔨 我的工作项（未完成）</h3>
+        <div id="mywork"></div>
       </div>
-      <div id="list"></div>
-      <div class="pager" id="pager" style="display:none">
-        <a class="btn small" href="javascript:goPage(-1)">上一页</a>
-        <span class="sub" id="pinfo"></span>
-        <a class="btn small" href="javascript:goPage(1)">下一页</a>
+      <div class="card list-main">
+        <div class="fld-row" style="margin-bottom:10px">
+          <label class="fld" style="min-width:150px"><span>项目</span><select id="f-project"></select></label>
+          <label class="fld" style="min-width:130px"><span>状态</span><select id="f-status">
+            <option value="">全部</option><option value="open">未关闭</option>
+          </select></label>
+          <label class="fld" style="min-width:90px"><span>类型</span><select id="f-type">
+            <option value="">全部</option><option value="bug">Bug</option>
+            <option value="req">需求</option><option value="opt">优化</option>
+          </select></label>
+          <label class="fld" style="min-width:120px"><span>标签</span><select id="f-tag"></select></label>
+          <label class="fld" style="flex:2;min-width:160px"><span>搜索</span>
+            <input type="text" id="f-q" placeholder="标题 / 描述关键词"></label>
+        </div>
+        <div id="list"></div>
+        <div class="pager" id="pager" style="display:none">
+          <a class="btn small" href="javascript:goPage(-1)">上一页</a>
+          <span class="sub" id="pinfo"></span>
+          <a class="btn small" href="javascript:goPage(1)">下一页</a>
+        </div>
       </div>
     </div>
-  </div>
-
-  <div class="card" id="mywork-card" style="display:none">
-    <h3>🔨 我的工作项（未完成）</h3>
-    <div id="mywork"></div>
   </div>
 </div>
 
@@ -204,10 +205,31 @@ async function loadMyWork() {
   $('mywork-card').style.display = '';
   $('mywork').innerHTML = d.items.map(c =>
     '<a class="row-item" href="/req.html?id=' + c.req_id + '">'
-    + '<div class="ri-top"><span class="chk-dot ' + c.status + '"></span>'
+    + '<div class="ri-top"><span class="chk-dot ' + c.status + ' chk-btn" title="点击标记完成"'
+    + ' onclick="toggleWorkItem(event, ' + c.id + ', this)"></span>'
     + '<span class="ri-title">' + esc(c.content) + '</span>'
     + '<span class="badge st-' + c.req_status + '">' + (ST[c.req_status] || c.req_status) + '</span></div>'
     + '<div class="ri-meta"><span>#' + c.req_id + ' ' + esc(c.title) + '</span></div></a>').join('');
+}
+
+// 侧栏直接勾完成：乐观反馈（划线淡出），后台 PATCH，成功后刷新侧栏与列表计数
+async function toggleWorkItem(ev, cid, el) {
+  ev.preventDefault(); ev.stopPropagation();
+  if (el.dataset.busy) return;
+  el.dataset.busy = '1';
+  const row = el.closest('.row-item');
+  row.style.transition = 'opacity .35s, transform .35s';
+  row.style.opacity = '0.35';
+  row.style.textDecoration = 'line-through';
+  try {
+    await api('/api/checklist/' + cid, { method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'done' }) });
+    setTimeout(() => { loadMyWork(); loadList(); }, 380);
+  } catch (e) {
+    row.style.opacity = ''; row.style.textDecoration = '';
+    alert('勾选失败，请重试');
+  }
 }
 
 function goPage(delta) {
@@ -276,15 +298,15 @@ for (const id of ['f-project', 'f-status', 'f-type', 'f-tag']) {
   $('f-tag').innerHTML = '<option value="">全部</option>'
     + b.tags.map(t => '<option value="' + esc(t.name) + '">' + esc(t.name) + '</option>').join('');
 
-  loadMyWork();
   if (URL_PROJECT) {
     // 列表模式：URL 指定项目（all = 全部）
     $('view-list').style.display = '';
     if (URL_PROJECT !== 'all') $('f-project').value = URL_PROJECT;
     $('btn-new').href = URL_PROJECT !== 'all' ? '/new.html?project=' + URL_PROJECT : '/new.html';
+    loadMyWork();
     loadList();
   } else {
-    // 项目视图
+    // 项目视图（工作项侧栏只在列表模式，项目页不请求）
     $('view-projects').style.display = '';
     loadProjects();
   }

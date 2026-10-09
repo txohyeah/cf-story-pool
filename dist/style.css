@@ -20,7 +20,7 @@ a { color: var(--blue); text-decoration: none; }
 .btn.primary:hover { opacity: .9; color: #fff; }
 .btn.danger { color: var(--red); border-color: #fecaca; }
 .btn.small { padding: 3px 10px; font-size: 13px; border-radius: 6px; }
-.wrap { max-width: 960px; margin: 0 auto; padding: 16px; }
+.wrap { max-width: 1400px; margin: 0 auto; padding: 16px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
   padding: 16px; margin-bottom: 14px; }
 .card h3 { margin: 0 0 10px; font-size: 15px; color: var(--sub); font-weight: 600; }
@@ -83,6 +83,19 @@ label.fld > span { display: block; font-size: 13px; color: var(--sub); margin-bo
 .dedup-box { background: var(--amber-bg); border: 1px solid #fde68a; border-radius: 8px;
   padding: 8px 12px; margin-top: 6px; font-size: 13px; }
 .dedup-box a { margin-right: 10px; }
+/* 宽屏双栏：左=我的工作项（sticky 独立滚动），右=需求列表；窄屏回退上下堆叠 */
+.list-layout { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 14px; align-items: start; }
+.side-work { position: sticky; top: 12px; max-height: calc(100vh - 90px); overflow-y: auto; }
+.side-work h3 { margin: 2px 0 6px; }
+.side-work .row-item { padding: 9px 10px; }
+.chk-btn { cursor: pointer; flex: none; }
+.chk-btn:hover { transform: scale(1.15); box-shadow: 0 0 0 4px rgba(37, 99, 235, .12); }
+@media (max-width: 1199px) {
+  .list-layout { grid-template-columns: 1fr; }
+  .side-work { position: static; max-height: none; order: 2; }
+  .list-main { order: 1; }
+}
+
 /* 状态快捷菜单 */
 .badge.clickable { cursor: pointer; }
 .status-menu { position: fixed; z-index: 60; background: #fff; border: 1px solid var(--line);
