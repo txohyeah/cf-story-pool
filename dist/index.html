@@ -182,7 +182,26 @@ function openStatusMenu(ev, id, cur) {
   setTimeout(() => document.addEventListener('click', closeStatusMenu, { once: true }), 0);
 }
 
+// ---------- 列表状态与 URL 同步（详情页返回后恢复筛选/页码） ----------
+function setSel(id, v) {
+  const el = $(id);
+  if (v != null && [...el.options].some(o => o.value === v)) el.value = v;
+}
+function syncUrl() {
+  if ($('view-list').style.display === 'none') return; // 只在列表模式同步
+  const sp = new URLSearchParams();
+  sp.set('project', $('f-project').value || 'all');
+  sp.set('status', $('f-status').value);
+  if ($('f-type').value) sp.set('type', $('f-type').value);
+  if ($('f-tag').value) sp.set('tag', $('f-tag').value);
+  const q = $('f-q').value.trim();
+  if (q) sp.set('q', q);
+  if (page > 1) sp.set('page', String(page));
+  history.replaceState(null, '', '/index.html?' + sp.toString());
+}
+
 async function loadList() {
+  syncUrl();
   const p = new URLSearchParams();
   if ($('f-project').value) p.set('project', $('f-project').value);
   if ($('f-status').value) p.set('status', $('f-status').value);
@@ -283,6 +302,18 @@ for (const id of ['f-project', 'f-status', 'f-type', 'f-tag']) {
   $(id).addEventListener('change', () => { page = 1; loadList(); });
 }
 
+// bfcache 后退恢复时强制重拉数据，避免详情页改过的状态显示旧值
+window.addEventListener('pageshow', e => {
+  if (!e.persisted) return;
+  if ($('view-list').style.display !== 'none') { loadList(); loadMyWork(); }
+  else loadProjects();
+});
+// 离开列表页时记下滚动位置，回到列表后恢复
+window.addEventListener('pagehide', () => {
+  if ($('view-list').style.display === 'none') return;
+  try { sessionStorage.setItem('sp_scroll', String(window.scrollY)); } catch (e) {}
+});
+
 (async function init() {
   // me 与 bootstrap 并行，省一个往返
   const pBoot = api('/api/bootstrap');
@@ -295,17 +326,29 @@ for (const id of ['f-project', 'f-status', 'f-type', 'f-tag']) {
     + b.projects.map(p => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join('');
   $('f-status').innerHTML += ['submitted','confirmed','scheduled','fixed','verified','closed','dup_closed']
     .map(s => '<option value="' + s + '">' + ST[s] + '</option>').join('');
-  $('f-status').value = 'open'; // 默认只看未关闭
   $('f-tag').innerHTML = '<option value="">全部</option>'
     + b.tags.map(t => '<option value="' + esc(t.name) + '">' + esc(t.name) + '</option>').join('');
+
+  // 从 URL 恢复上次离开时的筛选/页码（写入动作在 loadList 的 syncUrl 里）
+  const SP = new URL(location.href).searchParams;
+  const upage = parseInt(SP.get('page'), 10);
+  if (upage >= 1) page = upage;
+  // 上次离开列表页的滚动位置（pagehide 里记录），取完即清
+  const sy = parseInt(sessionStorage.getItem('sp_scroll') || '0', 10);
+  sessionStorage.removeItem('sp_scroll');
 
   if (URL_PROJECT) {
     // 列表模式：URL 指定项目（all = 全部）
     $('view-list').style.display = '';
-    if (URL_PROJECT !== 'all') $('f-project').value = URL_PROJECT;
+    setSel('f-project', URL_PROJECT !== 'all' ? URL_PROJECT : '');
+    setSel('f-status', SP.has('status') ? SP.get('status') : 'open'); // 默认只看未关闭
+    if (SP.has('type')) setSel('f-type', SP.get('type'));
+    if (SP.has('tag')) setSel('f-tag', SP.get('tag'));
+    if (SP.has('q')) $('f-q').value = SP.get('q');
     $('btn-new').href = URL_PROJECT !== 'all' ? '/new.html?project=' + URL_PROJECT : '/new.html';
     loadMyWork();
-    loadList();
+    await loadList();
+    if (sy > 0) window.scrollTo(0, sy);
   } else {
     // 项目视图（工作项侧栏只在列表模式，项目页不请求）
     $('view-projects').style.display = '';
