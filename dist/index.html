@@ -32,6 +32,7 @@
     <div class="list-layout">
       <div class="card side-work" id="mywork-card" style="display:none">
         <h3>🔨 我的工作项（未完成）</h3>
+        <label class="mw-sync"><input type="checkbox" id="mw-sync"> 同步需求过滤</label>
         <div id="mywork"></div>
       </div>
       <div class="card list-main">
@@ -219,8 +220,27 @@ async function loadList() {
 }
 
 async function loadMyWork() {
-  const d = await api('/api/my-work');
-  if (!d.items.length) { $('mywork-card').style.display = 'none'; return; }
+  // 勾选「同步需求过滤」时，把右侧筛选条件原样传给 /api/my-work
+  const sync = $('mw-sync').checked;
+  const p = new URLSearchParams();
+  if (sync) {
+    if ($('f-project').value) p.set('project', $('f-project').value);
+    if ($('f-status').value) p.set('status', $('f-status').value);
+    if ($('f-type').value) p.set('type', $('f-type').value);
+    if ($('f-tag').value) p.set('tag', $('f-tag').value);
+    if ($('f-q').value.trim()) p.set('q', $('f-q').value.trim());
+  }
+  const d = await api('/api/my-work' + (p.toString() ? '?' + p.toString() : ''));
+  if (!d.items.length) {
+    if (sync) {
+      // 勾选同步过滤后筛空：保留卡片显示提示，否则复选框跟着消失、无法取消
+      $('mywork-card').style.display = '';
+      $('mywork').innerHTML = '<div class="sub" style="padding:12px;text-align:center">没有匹配当前筛选的工作项</div>';
+    } else {
+      $('mywork-card').style.display = 'none';
+    }
+    return;
+  }
   $('mywork-card').style.display = '';
   $('mywork').innerHTML = d.items.map(c =>
     '<a class="row-item" href="/req.html?id=' + c.req_id + '">'
@@ -296,11 +316,12 @@ async function logout() { await api('/api/logout', { method: 'POST' }); location
 let debTimer = null;
 $('f-q').addEventListener('input', () => {
   clearTimeout(debTimer);
-  debTimer = setTimeout(() => { page = 1; loadList(); }, 400);
+  debTimer = setTimeout(() => { page = 1; loadList(); if ($('mw-sync').checked) loadMyWork(); }, 400);
 });
 for (const id of ['f-project', 'f-status', 'f-type', 'f-tag']) {
-  $(id).addEventListener('change', () => { page = 1; loadList(); });
+  $(id).addEventListener('change', () => { page = 1; loadList(); if ($('mw-sync').checked) loadMyWork(); });
 }
+$('mw-sync').addEventListener('change', () => loadMyWork());
 
 // bfcache 后退恢复时强制重拉数据，避免详情页改过的状态显示旧值
 window.addEventListener('pageshow', e => {

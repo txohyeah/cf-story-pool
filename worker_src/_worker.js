@@ -410,16 +410,47 @@ async function apiReqList(request, env, u) {
 }
 
 // ---------- 我的工作项 ----------
+// 支持与需求列表同名的过滤参数 project/status/type/tag/q（套在 JOIN 的需求上）；
+// q 同时匹配需求标题/描述与工作项内容。不带参数时行为与原版完全一致。
 async function apiMyWork(request, env, u) {
+  const url = new URL(request.url);
+  const where = [`c.assignee_id = ?`, `c.status != 'done'`,
+    `r.status NOT IN ('closed','dup_closed')`];
+  const args = [u.userId];
+  const status = (url.searchParams.get('status') || '').trim();
+  if (status === 'open') {
+    // 未关闭 = 默认条件，无需追加
+  } else if (status) {
+    const ss = status.split(',').filter(s => STATUSES.includes(s));
+    if (ss.length) { where.push(`r.status IN (${ss.map(() => '?').join(',')})`); args.push(...ss); }
+  }
+  const project = parseInt(url.searchParams.get('project'), 10);
+  if (project) { where.push('r.project_id = ?'); args.push(project); }
+  const type = url.searchParams.get('type');
+  if (TYPES.includes(type)) { where.push('r.type = ?'); args.push(type); }
+  const tag = (url.searchParams.get('tag') || '').trim();
+  if (tag) {
+    where.push(`EXISTS (SELECT 1 FROM requirement_tags rt JOIN tags t ON t.id = rt.tag_id
+      WHERE rt.req_id = r.id AND t.name = ?)`);
+    args.push(tag);
+  }
+  const q = (url.searchParams.get('q') || '').trim();
+  if (q) {
+    const tokens = qTokens(q);
+    if (tokens.length) {
+      where.push('(' + tokens.map(() =>
+        `(r.title LIKE ? ESCAPE '\\' OR r.description LIKE ? ESCAPE '\\' OR c.content LIKE ? ESCAPE '\\')`).join(' OR ') + ')');
+      for (const t of tokens) { const like = likeEsc(t); args.push(like, like, like); }
+    } else { where.push('0 = 1'); }
+  }
   const items = (await env.DB.prepare(
     `SELECT c.id, c.content, c.status, c.req_id, r.title, r.status AS req_status,
             us.display_name AS creator_name, r.updated_at
      FROM checklist_items c
      JOIN requirements r ON r.id = c.req_id
      LEFT JOIN users us ON us.id = r.created_by
-     WHERE c.assignee_id = ? AND c.status != 'done'
-       AND r.status NOT IN ('closed','dup_closed')
-     ORDER BY r.updated_at DESC, c.id ASC LIMIT 100`).bind(u.userId).all()).results;
+     WHERE ${where.join(' AND ')}
+     ORDER BY r.updated_at DESC, c.id ASC LIMIT 100`).bind(...args).all()).results;
   return json({ ok: true, items });
 }
 
