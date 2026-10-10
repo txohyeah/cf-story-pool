@@ -138,6 +138,15 @@ def main():
     check('bootstrap 含 be-trial/oncology', 'be-trial' in projects and 'oncology' in projects)
     check('bootstrap 含预置标签', any(t['name'] == 'AI整理' for t in d.get('tags', [])))
 
+    # 6b. 自愈清场：删掉历史中断运行泄漏的 [verify] 测试单（qwenpaw 保留地，按 title 前缀精准匹配）
+    s, d = jreq('GET', '/api/requirements?q=' + urllib.request.quote('[verify]') + '&page_size=50',
+                cookie=cookie)
+    stale = [x for x in d.get('items', []) if x['title'].startswith('[verify]')]
+    if stale:
+        print('  (清场: 删除历史残留 %s)' % [x['id'] for x in stale])
+        for x in stale:
+            jreq('DELETE', '/api/requirements/%d' % x['id'], cookie=cookie)
+
     # 7. 建单 A
     s, d = jreq('POST', '/api/requirements', {
         'project_id': projects['be-trial'], 'title': '[verify] 自检测试需求 storypool',
@@ -173,6 +182,50 @@ def main():
     s, d = jreq('GET', '/api/my-work', cookie=cookie)
     out_my = not any(c['req_id'] == aid for c in d.get('items', []))
     check('工作项清单 + 我的工作项', bool(cid) and in_my and out_my)
+
+    # 10b. my-work 同步过滤：project/type/tag/status/q 全链路（自包含：建 D + 给 A 加工作项 → 断言 → 清理）
+    s, d = jreq('POST', '/api/requirements/%d/checklist' % aid,
+                {'content': '前端联调', 'assignee_id': users['qwenpaw']}, cookie=cookie)
+    aid2_cid = d.get('id')
+    s, d = jreq('POST', '/api/requirements', {
+        'project_id': projects['oncology'], 'title': '[verify] mywork过滤探针',
+        'description': 'verify_live my-work 过滤测试', 'type': 'req',
+        'tags': ['verify自检', 'mywork探针标签']}, cookie=cookie)
+    did = d.get('id')
+    s, d = jreq('POST', '/api/requirements/%d/checklist' % did,
+                {'content': '[verify] mywork探针独特词zzq', 'assignee_id': users['qwenpaw']}, cookie=cookie)
+    did_cid = d.get('id')
+    s, d = jreq('GET', '/api/my-work', cookie=cookie)
+    mw_ids = {c['req_id'] for c in d.get('items', [])}
+    check('mywork过滤: 探针数据就绪(A+D)',
+          bool(aid2_cid) and bool(did) and bool(did_cid) and aid in mw_ids and did in mw_ids)
+
+    def mw_has(qs, want, notwant=()):
+        s, d = jreq('GET', '/api/my-work' + qs, cookie=cookie)
+        ids = {c['req_id'] for c in d.get('items', [])}
+        return set(want) <= ids and not (set(notwant) & ids)
+
+    check('mywork过滤: project=oncology 只剩D',
+          mw_has('?project=%d' % projects['oncology'], {did}, {aid}))
+    check('mywork过滤: type=bug 只剩A', mw_has('?type=bug', {aid}, {did}))
+    check('mywork过滤: type=req 只剩D', mw_has('?type=req', {did}, {aid}))
+    check('mywork过滤: tag=mywork探针标签 只剩D',
+          mw_has('?tag=' + urllib.request.quote('mywork探针标签'), {did}, {aid}))
+    check('mywork过滤: tag=verify自检 A+D 都在',
+          mw_has('?tag=' + urllib.request.quote('verify自检'), {aid, did}))
+    check('mywork过滤: status=confirmed 只剩A', mw_has('?status=confirmed', {aid}, {did}))
+    check('mywork过滤: q 命中工作项内容(D)',
+          mw_has('?q=' + urllib.request.quote('mywork探针独特词zzq'), {did}))
+    check('mywork过滤: q 命中需求标题(A)',
+          mw_has('?q=' + urllib.request.quote('自检测试需求'), {aid}))
+    check('mywork过滤: 组合 project+type',
+          mw_has('?project=%d&type=bug' % projects['be-trial'], {aid}, {did}))
+    # 清理：D 删除（工作项级联删），A 的探针工作项标 done
+    s, d = jreq('DELETE', '/api/requirements/%d' % did, cookie=cookie)
+    s, d = jreq('PATCH', '/api/checklist/%d' % aid2_cid, {'status': 'done'}, cookie=cookie)
+    s, d = jreq('GET', '/api/my-work', cookie=cookie)
+    mw_ids = {c['req_id'] for c in d.get('items', [])}
+    check('mywork过滤: 清理闭环', d.get('ok') and did not in mw_ids and aid not in mw_ids)
 
     # 11. 评论
     s, d = jreq('POST', '/api/requirements/%d/comment' % aid, {'text': 'verify 评论'}, cookie=cookie)
