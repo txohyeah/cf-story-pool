@@ -45,6 +45,9 @@
             <option value="">全部</option><option value="bug">Bug</option>
             <option value="req">需求</option><option value="opt">优化</option>
           </select></label>
+          <label class="fld" style="min-width:100px"><span>紧急</span><select id="f-urgency">
+            <option value="">全部</option><option value="urgent">仅紧急</option>
+          </select></label>
           <label class="fld" style="min-width:120px"><span>标签</span><select id="f-tag"></select></label>
           <label class="fld" style="flex:2;min-width:160px"><span>搜索</span>
             <input type="text" id="f-q" placeholder="标题 / 描述关键词"></label>
@@ -194,6 +197,7 @@ function syncUrl() {
   sp.set('project', $('f-project').value || 'all');
   sp.set('status', $('f-status').value);
   if ($('f-type').value) sp.set('type', $('f-type').value);
+  if ($('f-urgency').value) sp.set('urgency', $('f-urgency').value);
   if ($('f-tag').value) sp.set('tag', $('f-tag').value);
   const q = $('f-q').value.trim();
   if (q) sp.set('q', q);
@@ -207,6 +211,7 @@ async function loadList() {
   if ($('f-project').value) p.set('project', $('f-project').value);
   if ($('f-status').value) p.set('status', $('f-status').value);
   if ($('f-type').value) p.set('type', $('f-type').value);
+  if ($('f-urgency').value) p.set('urgency', $('f-urgency').value);
   if ($('f-tag').value) p.set('tag', $('f-tag').value);
   if ($('f-q').value.trim()) p.set('q', $('f-q').value.trim());
   p.set('page', page);
@@ -227,6 +232,7 @@ async function loadMyWork() {
     if ($('f-project').value) p.set('project', $('f-project').value);
     if ($('f-status').value) p.set('status', $('f-status').value);
     if ($('f-type').value) p.set('type', $('f-type').value);
+    if ($('f-urgency').value) p.set('urgency', $('f-urgency').value);
     if ($('f-tag').value) p.set('tag', $('f-tag').value);
     if ($('f-q').value.trim()) p.set('q', $('f-q').value.trim());
   }
@@ -318,7 +324,7 @@ $('f-q').addEventListener('input', () => {
   clearTimeout(debTimer);
   debTimer = setTimeout(() => { page = 1; loadList(); if ($('mw-sync').checked) loadMyWork(); }, 400);
 });
-for (const id of ['f-project', 'f-status', 'f-type', 'f-tag']) {
+for (const id of ['f-project', 'f-status', 'f-type', 'f-urgency', 'f-tag']) {
   $(id).addEventListener('change', () => { page = 1; loadList(); if ($('mw-sync').checked) loadMyWork(); });
 }
 $('mw-sync').addEventListener('change', () => loadMyWork());
@@ -364,6 +370,7 @@ window.addEventListener('pagehide', () => {
     setSel('f-project', URL_PROJECT !== 'all' ? URL_PROJECT : '');
     setSel('f-status', SP.has('status') ? SP.get('status') : 'open'); // 默认只看未关闭
     if (SP.has('type')) setSel('f-type', SP.get('type'));
+    if (SP.has('urgency')) setSel('f-urgency', SP.get('urgency'));
     if (SP.has('tag')) setSel('f-tag', SP.get('tag'));
     if (SP.has('q')) $('f-q').value = SP.get('q');
     $('btn-new').href = URL_PROJECT !== 'all' ? '/new.html?project=' + URL_PROJECT : '/new.html';

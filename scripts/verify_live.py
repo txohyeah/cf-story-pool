@@ -214,6 +214,10 @@ def main():
     check('mywork过滤: tag=verify自检 A+D 都在',
           mw_has('?tag=' + urllib.request.quote('verify自检'), {aid, did}))
     check('mywork过滤: status=confirmed 只剩A', mw_has('?status=confirmed', {aid}, {did}))
+    check('mywork过滤: urgency=urgent 只剩A', mw_has('?urgency=urgent', {aid}, {did}))
+    s, d = jreq('GET', '/api/requirements?urgency=urgent&page_size=50', cookie=cookie)
+    lst_ids = {x['id'] for x in d.get('items', [])}
+    check('列表过滤: urgency=urgent 含A不含D', aid in lst_ids and did not in lst_ids)
     check('mywork过滤: q 命中工作项内容(D)',
           mw_has('?q=' + urllib.request.quote('mywork探针独特词zzq'), {did}))
     check('mywork过滤: q 命中需求标题(A)',

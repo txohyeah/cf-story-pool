@@ -428,6 +428,8 @@ async function apiMyWork(request, env, u) {
   if (project) { where.push('r.project_id = ?'); args.push(project); }
   const type = url.searchParams.get('type');
   if (TYPES.includes(type)) { where.push('r.type = ?'); args.push(type); }
+  const urgency = url.searchParams.get('urgency');
+  if (URGENCIES.includes(urgency)) { where.push('r.urgency = ?'); args.push(urgency); }
   const tag = (url.searchParams.get('tag') || '').trim();
   if (tag) {
     where.push(`EXISTS (SELECT 1 FROM requirement_tags rt JOIN tags t ON t.id = rt.tag_id
