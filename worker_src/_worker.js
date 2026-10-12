@@ -236,7 +236,11 @@ async function apiProjectDelete(request, env, id) {
   if (!p) return json({ error: '项目不存在' }, 404);
   const n = (await env.DB.prepare('SELECT COUNT(*) AS n FROM requirements WHERE project_id = ?').bind(id).first()).n;
   if (n > 0) return json({ error: '项目下仍有需求，不能删除' }, 400);
-  await env.DB.prepare('DELETE FROM projects WHERE id = ?').bind(id).run();
+  // 先清标签归属引用，否则外键约束会让 DELETE 失败
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM project_tags WHERE project_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM projects WHERE id = ?').bind(id),
+  ]);
   return json({ ok: true });
 }
 
