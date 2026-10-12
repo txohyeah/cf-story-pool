@@ -53,7 +53,12 @@ async function login() {
       body: JSON.stringify({ username: $('u').value.trim(), password: $('p').value })
     });
     const d = await r.json();
-    if (r.ok && d.ok) { location.href = '/'; return; }
+    if (r.ok && d.ok) {
+      // 带 next 回跳（如从需求深链登录进来），只接受站内路径防开放重定向
+      const nx = new URL(location.href).searchParams.get('next');
+      location.href = (nx && nx.startsWith('/') && !nx.startsWith('//')) ? nx : '/';
+      return;
+    }
     $('err').textContent = d.error || ('登录失败 ' + r.status);
   } catch (e) { $('err').textContent = '网络错误，请重试'; }
   $('go').disabled = false;
