@@ -51,6 +51,8 @@
           <label class="fld" style="min-width:120px"><span>标签</span><select id="f-tag"></select></label>
           <label class="fld" style="flex:2;min-width:160px"><span>搜索</span>
             <input type="text" id="f-q" placeholder="标题 / 描述关键词"></label>
+          <label class="fld" style="flex:0 0 auto"><span>&nbsp;</span>
+            <button class="btn small" onclick="openProjModal()" title="新建研发项目（列表页也可建）">＋ 新项目</button></label>
         </div>
         <div id="list"></div>
         <div class="pager" id="pager" style="display:none">
@@ -100,7 +102,6 @@
       <button class="btn small" id="dr-next" title="下一条（→）">下一条 →</button>
       <span class="sub" id="dr-pos"></span>
       <span style="flex:1"></span>
-      <a class="btn small" id="dr-newwin" href="#" target="_blank" rel="noopener" title="在新标签页打开完整页">↗ 新窗口</a>
       <button class="btn small" id="dr-close" title="关闭（Esc）">✕ 关闭</button>
     </div>
 
@@ -212,8 +213,18 @@ $('proj-save').onclick = async () => {
   if (!name) { $('proj-err').textContent = '请输入项目名称'; return; }
   const d = await api('/api/projects', { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
-  if (d.ok) { closeProjModal(); loadProjects(); }
-  else $('proj-err').textContent = d.error || '创建失败';
+  if (!d.ok) { $('proj-err').textContent = d.error || '创建失败'; return; }
+  closeProjModal();
+  if ($('view-list').style.display === 'none') { loadProjects(); return; } // 项目视图
+  // 列表模式：新项目塞进筛选下拉和抽屉编辑下拉，并直接切到该项目
+  for (const sel of ['f-project', 'e-project']) {
+    const o = document.createElement('option');
+    o.value = d.id; o.textContent = d.name;
+    $(sel).appendChild(o);
+  }
+  $('f-project').value = d.id;
+  refreshTagFilter(); // 新项目还没有标签，f-tag 归零
+  page = 1; loadList(); if ($('mw-sync').checked) loadMyWork();
 };
 $('proj-name').addEventListener('keydown', e => { if (e.key === 'Enter') $('proj-save').click(); });
 
@@ -272,7 +283,7 @@ function openStatusMenu(ev, id, cur) {
 // ---------- 需求详情抽屉（列表页内直接看/改需求，Esc 或浏览器返回键关闭） ----------
 const ACTN = { create:'📥 创建', status:'🔁 流转', comment:'💬 评论', checklist:'🔨 清单',
   tag:'🏷️ 标签', edit:'✏️ 编辑' };
-let D = null, users = [], curReqId = 0, drawerOpen = false, drawerPushed = false, listItems = [];
+let D = null, users = [], allTags = [], curReqId = 0, drawerOpen = false, drawerPushed = false, listItems = [];
 
 function rowClick(ev, id) {
   // 修饰键 / 中键点击放行：浏览器默认新标签打开 href（列表页 + 自动弹该条抽屉）
@@ -339,6 +350,7 @@ async function loadReq(id) {
   if (curReqId !== id) return; // 加载期间已切到别的条
   if (!d.ok) { $('info').innerHTML = '<div class="err" style="padding:16px">' + esc(d.error || '加载失败') + '</div>'; return; }
   D = d;
+  refreshDrawerDatalist(D.req.project_id); // 标签联想按需求所属项目
   renderInfo(); renderStatus(); renderTags(); renderChk(); renderAtts(); renderEvents();
   updateNavBtns();
 }
@@ -350,7 +362,6 @@ function updateNavBtns() {
   $('dr-prev').disabled = !canPrev;
   $('dr-next').disabled = !canNext;
   $('dr-pos').textContent = i >= 0 ? '本页第 ' + (i + 1) + ' / ' + listItems.length + ' 条' : '';
-  if (curReqId) $('dr-newwin').href = '/index.html?project=all&req=' + curReqId; // 新窗口按钮跟随当前条目
 }
 async function navReq(delta) {
   if (!curReqId || !listItems.length) return;
@@ -725,6 +736,8 @@ $('f-q').addEventListener('input', () => {
 for (const id of ['f-project', 'f-status', 'f-type', 'f-urgency', 'f-tag']) {
   $(id).addEventListener('change', () => { page = 1; loadList(); if ($('mw-sync').checked) loadMyWork(); });
 }
+// 项目切换 → 标签选项按项目过滤（标签与项目隔离）
+$('f-project').addEventListener('change', () => refreshTagFilter());
 $('mw-sync').addEventListener('change', () => loadMyWork());
 
 // bfcache 后退恢复时强制重拉数据，避免详情页改过的状态显示旧值
@@ -754,12 +767,10 @@ window.addEventListener('pagehide', () => {
     + b.projects.map(p => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join('');
   $('f-status').innerHTML += ['submitted','confirmed','scheduled','fixed','verified','closed','dup_closed']
     .map(s => '<option value="' + s + '">' + ST[s] + '</option>').join('');
-  $('f-tag').innerHTML = '<option value="">全部</option>'
-    + b.tags.map(t => '<option value="' + esc(t.name) + '">' + esc(t.name) + '</option>').join('');
-  // 详情抽屉依赖（编辑表单项目下拉 / 标签联想 / 工作项指派）
+  $('f-tag').innerHTML = '<option value="">全部</option>';
+  allTags = b.tags; // [{id, name, project_id}] 一行一(标签,项目)；选项按当前项目过滤
   users = b.users;
   $('e-project').innerHTML = b.projects.map(p => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join('');
-  $('tag-list').innerHTML = b.tags.map(t => '<option value="' + esc(t.name) + '">').join('');
   $('ck-assignee').innerHTML = '<option value="">未指派</option>'
     + users.map(us => '<option value="' + us.id + '">' + esc(us.display_name) + '</option>').join('');
 
@@ -779,9 +790,9 @@ window.addEventListener('pagehide', () => {
     setSel('f-status', SP.has('status') ? SP.get('status') : 'open'); // 默认只看未关闭
     if (SP.has('type')) setSel('f-type', SP.get('type'));
     if (SP.has('urgency')) setSel('f-urgency', SP.get('urgency'));
-    if (SP.has('tag')) setSel('f-tag', SP.get('tag'));
     if (SP.has('q')) $('f-q').value = SP.get('q');
     $('btn-new').href = URL_PROJECT && URL_PROJECT !== 'all' ? '/new.html?project=' + URL_PROJECT : '/new.html';
+    refreshTagFilter(SP.get('tag')); // 按所选项目过滤标签选项，尽量保留 URL 里的 tag
     loadMyWork();
     await loadList();
     if (ureq) syncDrawerFromUrl(); // 深链：自动打开详情抽屉
@@ -792,6 +803,29 @@ window.addEventListener('pagehide', () => {
     loadProjects();
   }
 })();
+
+// 标签按项目隔离：取某项目下的标签名（全部项目视图 = 跨项目去重）
+function tagNamesForProject(pid) {
+  const names = new Set();
+  for (const t of allTags) {
+    if (!t.project_id) continue; // 无归属标签（从未被需求使用）不进下拉
+    if (!pid || String(t.project_id) === String(pid)) names.add(t.name);
+  }
+  return [...names].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+}
+// 重建 f-tag 选项；keep 传值时尽量保留该选中项（URL 恢复用），否则保留当前选中
+function refreshTagFilter(keep) {
+  const want = keep !== undefined ? keep : $('f-tag').value;
+  const names = tagNamesForProject($('f-project').value);
+  $('f-tag').innerHTML = '<option value="">全部</option>'
+    + names.map(n => '<option value="' + esc(n) + '">' + esc(n) + '</option>').join('');
+  if (want && names.includes(want)) $('f-tag').value = want;
+}
+// 抽屉标签联想：按需求所属项目过滤
+function refreshDrawerDatalist(pid) {
+  $('tag-list').innerHTML = tagNamesForProject(String(pid))
+    .map(n => '<option value="' + esc(n) + '">').join('');
+}
 </script>
 </body>
 </html>

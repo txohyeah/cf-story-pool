@@ -244,8 +244,10 @@ async function apiProjectDelete(request, env, id) {
 async function apiBootstrap(request, env) {
   const projects = (await env.DB.prepare(
     'SELECT id, name FROM projects WHERE is_active = 1 ORDER BY id').all()).results;
+  // 标签按项目隔离：一行一 (标签, 项目)，project_tags 无记录的孤儿标签不返回
   const tags = (await env.DB.prepare(
-    'SELECT id, name FROM tags ORDER BY name LIMIT 500').all()).results;
+    `SELECT t.id, t.name, pt.project_id FROM tags t
+     JOIN project_tags pt ON pt.tag_id = t.id ORDER BY t.name LIMIT 500`).all()).results;
   const users = (await env.DB.prepare(
     'SELECT id, username, display_name FROM users WHERE active = 1 ORDER BY id').all()).results;
   return json({ ok: true, projects, tags, users, statuses: STATUSES, open_statuses: OPEN_STATUSES, types: TYPES, urgencies: URGENCIES });
@@ -263,8 +265,8 @@ async function apiTagList(request, env) {
   return json({ ok: true, tags: rows });
 }
 
-// ---------- 标签解析：名字数组 → 确保存在 → 返回 id 数组 ----------
-async function resolveTagIds(env, names) {
+// ---------- 标签解析：名字数组 → 确保存在并归属项目 → 返回 id 数组 ----------
+async function resolveTagIds(env, names, projectId) {
   const clean = [];
   const seen = new Set();
   for (const n0 of (names || [])) {
@@ -281,6 +283,12 @@ async function resolveTagIds(env, names) {
   const placeholders = clean.map(() => '?').join(',');
   const rows = (await env.DB.prepare(
     `SELECT id, name FROM tags WHERE name IN (${placeholders})`).bind(...clean).all()).results;
+  // 标签与项目绑定：新标签/已有标签都确保挂到当前项目下（幂等）
+  if (projectId) {
+    const binds = rows.map(r => env.DB.prepare(
+      'INSERT OR IGNORE INTO project_tags (tag_id, project_id) VALUES (?, ?)').bind(r.id, projectId));
+    if (binds.length) await env.DB.batch(binds);
+  }
   const byName = new Map(rows.map(r => [r.name, r.id]));
   return clean.map(n => byName.get(n)).filter(Boolean);
 }
@@ -307,7 +315,7 @@ async function apiReqCreate(request, env, u) {
   for (const a of attaches) {
     if (!a || !validAttachToken(a.key)) return json({ error: '附件参数非法' }, 400);
   }
-  const tagIds = await resolveTagIds(env, body.tags);
+  const tagIds = await resolveTagIds(env, body.tags, projectId);
   const ins = await env.DB.prepare(
     `INSERT INTO requirements (project_id, title, description, type, urgency, status, channel, created_by, updated_at)
      VALUES (?, ?, ?, ?, ?, 'submitted', 'web', ?, ?)`)
@@ -543,7 +551,8 @@ async function apiReqPatch(request, env, u, id) {
     return json({ ok: true });
   }
   if (op === 'tags') {
-    const tagIds = await resolveTagIds(env, body.tags);
+    // 标签归属需求所在项目（r 在本函数开头已查出）
+    const tagIds = await resolveTagIds(env, body.tags, r.project_id);
     await env.DB.prepare('DELETE FROM requirement_tags WHERE req_id = ?').bind(id).run();
     for (const tid of tagIds) {
       await env.DB.prepare('INSERT OR IGNORE INTO requirement_tags (req_id, tag_id) VALUES (?, ?)').bind(id, tid).run();

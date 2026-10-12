@@ -35,6 +35,13 @@ CREATE TABLE IF NOT EXISTS tags (
   name TEXT UNIQUE NOT NULL
 );
 
+-- 标签-项目归属（2026-10-12 标签隔离改造；旧库以增量迁移添加）
+CREATE TABLE IF NOT EXISTS project_tags (
+  tag_id INTEGER NOT NULL REFERENCES tags(id),
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  PRIMARY KEY (tag_id, project_id)
+);
+
 CREATE TABLE IF NOT EXISTS requirements (
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -102,6 +109,7 @@ CREATE INDEX IF NOT EXISTS idx_req_project ON requirements(project_id);
 CREATE INDEX IF NOT EXISTS idx_req_updated ON requirements(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_rtag_req ON requirement_tags(req_id);
 CREATE INDEX IF NOT EXISTS idx_rtag_tag ON requirement_tags(tag_id);
+CREATE INDEX IF NOT EXISTS idx_ptag_project ON project_tags(project_id);
 CREATE INDEX IF NOT EXISTS idx_att_req ON attachments(req_id);
 CREATE INDEX IF NOT EXISTS idx_chk_req ON checklist_items(req_id);CREATE INDEX IF NOT EXISTS idx_chk_assignee ON checklist_items(assignee_id);
 CREATE INDEX IF NOT EXISTS idx_evt_req ON events(req_id);

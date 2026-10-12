@@ -158,6 +158,20 @@ $('go').onclick = async () => {
   $('go').disabled = false; $('go').textContent = '提 交';
 };
 
+// 标签按项目隔离：联想列表跟随所选项目
+let allTags = [];
+function refreshNewTagDatalist() {
+  const pid = $('project').value;
+  const names = new Set();
+  for (const t of allTags) {
+    if (!t.project_id) continue; // 无归属标签不进联想
+    if (!pid || String(t.project_id) === String(pid)) names.add(t.name);
+  }
+  $('tag-list').innerHTML = [...names].sort((a, b) => a.localeCompare(b, 'zh-CN'))
+    .map(n => '<option value="' + esc(n) + '">').join('');
+}
+$('project').addEventListener('change', refreshNewTagDatalist);
+
 (async function init() {
   const m = await api('/api/me');
   if (!m.authed) { location.href = '/login'; return; }
@@ -166,7 +180,8 @@ $('go').onclick = async () => {
   // 从项目内点「＋新需求」进来时（?project=N）默认选中该项目
   const up = new URL(location.href).searchParams.get('project');
   if (up) $('project').value = up;
-  $('tag-list').innerHTML = b.tags.map(t => '<option value="' + esc(t.name) + '">').join('');
+  allTags = b.tags; // [{id, name, project_id}] 一行一(标签,项目)
+  refreshNewTagDatalist();
 })();
 </script>
 </body>
