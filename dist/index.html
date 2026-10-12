@@ -92,6 +92,89 @@
   </div>
 </div>
 
+<!-- 需求详情抽屉：列表页内直接看/改需求，Esc 或浏览器返回键关闭 -->
+<div class="drawer-overlay" id="drawer-overlay" style="display:none">
+  <aside class="drawer" role="dialog" aria-label="需求详情">
+    <div class="drawer-head">
+      <button class="btn small" id="dr-prev" title="上一条（←）">← 上一条</button>
+      <button class="btn small" id="dr-next" title="下一条（→）">下一条 →</button>
+      <span class="sub" id="dr-pos"></span>
+      <span style="flex:1"></span>
+      <button class="btn small" id="dr-newwin" title="在新标签页打开完整页">↗ 新窗口</button>
+      <button class="btn small" id="dr-close" title="关闭（Esc）">✕ 关闭</button>
+    </div>
+
+    <div class="card" id="info"></div>
+
+    <div class="card" id="edit-card" style="display:none">
+      <h3>✏️ 编辑</h3>
+      <label class="fld"><span>标题</span><input type="text" id="e-title" maxlength="200"></label>
+      <label class="fld"><span>描述 / 复现步骤</span><textarea id="e-desc" rows="5"></textarea></label>
+      <div class="fld-row">
+        <label class="fld"><span>项目</span><select id="e-project"></select></label>
+        <label class="fld"><span>类型</span><select id="e-type">
+          <option value="req">需求</option><option value="bug">Bug</option><option value="opt">优化</option>
+        </select></label>
+        <label class="fld"><span>紧急度</span><select id="e-urgency">
+          <option value="normal">普通</option><option value="urgent">紧急</option>
+        </select></label>
+      </div>
+      <button class="btn primary" id="e-save">保存修改</button>
+      <div class="err" id="e-err"></div>
+    </div>
+
+    <div class="card">
+      <h3>🔁 状态流转</h3>
+      <div class="fld-row" style="align-items:flex-end">
+        <label class="fld" style="min-width:150px"><span>移动到</span><select id="s-next"></select></label>
+        <label class="fld" style="flex:1;min-width:140px"><span>备注（可选）</span><input type="text" id="s-note" maxlength="200"></label>
+        <button class="btn primary" id="s-go">流转</button>
+      </div>
+      <div id="dup-row" style="display:none;margin-top:8px">
+        <label class="fld"><span>原单 ID（本条与之重复）</span>
+          <input type="text" id="s-dup" inputmode="numeric" placeholder="输入原单编号，如 12"></label>
+      </div>
+      <div class="err" id="s-err"></div>
+    </div>
+
+    <div class="card">
+      <h3>🏷️ 标签</h3>
+      <div id="tags"></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <input type="text" id="tag-in" list="tag-list" placeholder="输入标签" style="flex:1">
+        <datalist id="tag-list"></datalist>
+        <button class="btn small" id="tag-add">添加标签</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>🔨 工作项清单（接力顺序 = 行顺序）</h3>
+      <div id="chk"></div>
+      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
+        <input type="text" id="ck-content" placeholder="工作内容，如：后端开发" style="flex:1;min-width:150px">
+        <select id="ck-assignee" style="width:auto"></select>
+        <button class="btn small" id="ck-add">添加工作项</button>
+      </div>
+    </div>
+
+    <div class="card" id="att-card" style="display:none">
+      <h3>🖼️ 截图附件</h3>
+      <div id="atts" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+    </div>
+
+    <div class="card">
+      <h3>💬 评论</h3>
+      <textarea id="c-text" rows="3" placeholder="补充信息、确认结果…"></textarea>
+      <div style="margin-top:8px"><button class="btn primary small" id="c-go">发送评论</button></div>
+    </div>
+
+    <div class="card">
+      <h3>📜 流水</h3>
+      <div id="events"></div>
+    </div>
+  </aside>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
 const ST = { submitted:'待复现确认', confirmed:'已确认', scheduled:'已排期', fixed:'已修复',
@@ -108,7 +191,7 @@ function goHome() { location.href = '/index.html'; }
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
-  if (r.status === 401) { location.href = '/login'; throw new Error('未登录'); }
+  if (r.status === 401) { location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search); throw new Error('未登录'); }
   return r.json();
 }
 
@@ -138,7 +221,7 @@ $('proj-name').addEventListener('keydown', e => { if (e.key === 'Enter') $('proj
 function itemHtml(x) {
   const tags = (x.tags || []).map(t => '<span class="tag-chip">' + esc(t) + '</span>').join('');
   const tasks = x.open_tasks ? ' <span title="未完成工作项">🔨' + x.open_tasks + '</span>' : '';
-  return '<a class="row-item" href="/req.html?id=' + x.id + '">'
+  return '<a class="row-item" href="/req.html?id=' + x.id + '" onclick="rowClick(event, ' + x.id + ')">'
     + '<div class="ri-top"><span class="rid">#' + x.id + '</span>'
     + '<span class="ri-title">' + esc(x.title) + '</span>'
     + (x.urgency === 'urgent' ? '<span class="badge ug-urgent">紧急</span>' : '')
@@ -164,7 +247,7 @@ function openStatusMenu(ev, id, cur) {
   m.innerHTML = SM_ORDER.map(s =>
     '<div class="sm-item' + (s === cur ? ' cur' : '') + '" data-s="' + s + '">'
     + (s === cur ? '✓ ' : '') + ST[s] + '</div>').join('')
-    + '<div class="sm-tip">重复关闭请在详情页操作</div>';
+    + '<div class="sm-tip">重复关闭请点开需求后在「状态流转」操作</div>';
   document.body.appendChild(m);
   statusMenuEl = m;
   const r = ev.target.getBoundingClientRect();
@@ -186,6 +269,314 @@ function openStatusMenu(ev, id, cur) {
   setTimeout(() => document.addEventListener('click', closeStatusMenu, { once: true }), 0);
 }
 
+// ---------- 需求详情抽屉（列表页内直接看/改需求，Esc 或浏览器返回键关闭） ----------
+const ACTN = { create:'📥 创建', status:'🔁 流转', comment:'💬 评论', checklist:'🔨 清单',
+  tag:'🏷️ 标签', edit:'✏️ 编辑' };
+let D = null, users = [], curReqId = 0, drawerOpen = false, drawerPushed = false, listItems = [];
+
+function rowClick(ev, id) {
+  // 修饰键 / 中键点击放行：浏览器默认在新标签打开 /req.html（由它重定向到列表+抽屉）
+  if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button !== 0) return;
+  ev.preventDefault();
+  openReq(id);
+}
+function gotoReq(id) { openReq(id); } // 抽屉内跳到另一条（如重复单原单）
+
+function drawerUrl(id) {
+  const sp = new URLSearchParams(location.search);
+  sp.set('req', id);
+  return '/index.html?' + sp.toString();
+}
+function showDrawer() {
+  closeStatusMenu();
+  $('drawer-overlay').style.display = 'flex';
+  document.body.classList.add('noscroll');
+  requestAnimationFrame(() => $('drawer-overlay').classList.add('open'));
+  drawerOpen = true;
+}
+function hideDrawer() {
+  $('drawer-overlay').classList.remove('open');
+  drawerOpen = false; curReqId = 0;
+  document.body.classList.remove('noscroll');
+  setTimeout(() => { if (!drawerOpen) $('drawer-overlay').style.display = 'none'; }, 260);
+}
+function openReq(id) {
+  if (!id) return;
+  if (drawerOpen) history.replaceState(null, '', drawerUrl(id)); // 抽屉内换条：替换历史，返回键仍是关抽屉
+  else { history.pushState(null, '', drawerUrl(id)); drawerPushed = true; }
+  showDrawer();
+  loadReq(id);
+}
+function closeReq() {
+  // 由本页 pushState 打开的：后退一步（返回键/点关闭行为一致），popstate 里真正收尾
+  if (drawerPushed && new URLSearchParams(location.search).get('req')) { history.back(); return; }
+  // 深链直达（历史不是本页 push 的）：清掉 req 参数直接关，避免 back 跳出站点
+  drawerPushed = false;
+  const sp = new URLSearchParams(location.search);
+  sp.delete('req');
+  history.replaceState(null, '', '/index.html' + (sp.toString() ? '?' + sp.toString() : ''));
+  hideDrawer();
+}
+function syncDrawerFromUrl() {
+  const id = parseInt(new URL(location.href).searchParams.get('req'), 10);
+  if (id) {
+    drawerPushed = true;
+    const changed = id !== curReqId;
+    showDrawer();
+    if (changed) loadReq(id);
+  } else { drawerPushed = false; hideDrawer(); }
+}
+window.addEventListener('popstate', syncDrawerFromUrl);
+
+async function loadReq(id) {
+  curReqId = id;
+  $('info').innerHTML = '<div class="sub" style="padding:30px;text-align:center">加载中…</div>';
+  $('edit-card').style.display = 'none';
+  $('att-card').style.display = 'none';
+  for (const cid of ['tags', 'chk', 'atts', 'events']) $(cid).innerHTML = '';
+  $('c-text').value = '';
+  const d = await api('/api/requirements/' + id);
+  if (curReqId !== id) return; // 加载期间已切到别的条
+  if (!d.ok) { $('info').innerHTML = '<div class="err" style="padding:16px">' + esc(d.error || '加载失败') + '</div>'; return; }
+  D = d;
+  renderInfo(); renderStatus(); renderTags(); renderChk(); renderAtts(); renderEvents();
+  updateNavBtns();
+}
+
+function updateNavBtns() {
+  const i = listItems.findIndex(x => x.id === curReqId);
+  const canPrev = i > 0 || page > 1;
+  const canNext = (i >= 0 && i < listItems.length - 1) || page < pages;
+  $('dr-prev').disabled = !canPrev;
+  $('dr-next').disabled = !canNext;
+  $('dr-pos').textContent = i >= 0 ? '本页第 ' + (i + 1) + ' / ' + listItems.length + ' 条' : '';
+}
+async function navReq(delta) {
+  if (!curReqId || !listItems.length) return;
+  const i = listItems.findIndex(x => x.id === curReqId);
+  if (i < 0) return;
+  const j = i + delta;
+  if (j >= 0 && j < listItems.length) { openReq(listItems[j].id); return; }
+  // 本页到头：自动翻页取另一端第一条，过需求可以连续翻
+  if (delta > 0 && page < pages) {
+    page += 1; await loadList(); if ($('mw-sync').checked) loadMyWork();
+    if (listItems.length) openReq(listItems[0].id);
+  } else if (delta < 0 && page > 1) {
+    page -= 1; await loadList(); if ($('mw-sync').checked) loadMyWork();
+    if (listItems.length) openReq(listItems[listItems.length - 1].id);
+  }
+}
+$('dr-prev').onclick = () => navReq(-1);
+$('dr-next').onclick = () => navReq(1);
+$('dr-close').onclick = closeReq;
+$('dr-newwin').onclick = () => { if (curReqId) window.open('/req.html?id=' + curReqId); };
+
+// Esc 关闭、←/→ 上下条（焦点在输入框时不抢按键）
+document.addEventListener('keydown', e => {
+  if (!drawerOpen) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  if (e.key === 'Escape') closeReq();
+  else if (e.key === 'ArrowLeft') navReq(-1);
+  else if (e.key === 'ArrowRight') navReq(1);
+});
+
+function renderInfo() {
+  const r = D.req;
+  const dup = D.dup_of
+    ? '<div style="margin-top:6px">↩️ 重复单，原单：<a href="javascript:void(0)" onclick="gotoReq(' + D.dup_of.id + ')">#' + D.dup_of.id
+      + ' ' + esc(D.dup_of.title) + '</a></div>' : '';
+  $('info').innerHTML =
+    '<div class="ri-top"><span class="rid">#' + r.id + '</span>'
+    + '<span class="ri-title" style="font-size:17px">' + esc(r.title) + '</span>'
+    + (r.urgency === 'urgent' ? '<span class="badge ug-urgent">紧急</span>' : '')
+    + '<span class="badge st-' + r.status + '">' + (ST[r.status] || r.status) + '</span></div>'
+    + '<div class="ri-meta" style="margin-top:6px">'
+    + '<span>' + esc(r.project_name) + '</span>'
+    + '<span class="badge ty-' + r.type + '">' + (TY[r.type] || r.type) + '</span>'
+    + '<span>提单：' + esc(r.creator_name || '-') + '</span>'
+    + '<span>' + fmtTime(r.created_at) + '</span>'
+    + '<span>通道：' + esc(r.channel) + '</span></div>'
+    + (r.description ? '<div style="margin-top:10px;white-space:pre-wrap">' + esc(r.description) + '</div>' : '')
+    + dup
+    + '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">'
+    + '<button class="btn small" id="btn-edit">编辑</button>'
+    + '<button class="btn small danger" id="btn-del">删除</button></div>';
+  $('btn-edit').onclick = () => {
+    const showing = $('edit-card').style.display === 'none';
+    $('edit-card').style.display = showing ? '' : 'none';
+    if (showing) { // 打开时预填当前值
+      $('e-title').value = r.title;
+      $('e-desc').value = r.description || '';
+      $('e-type').value = r.type;
+      $('e-urgency').value = r.urgency;
+      setSel('e-project', String(r.project_id));
+      $('e-err').textContent = '';
+    }
+  };
+  $('btn-del').onclick = async () => {
+    if (!confirm('确定删除需求 #' + r.id + '？不可恢复')) return;
+    if (!confirm('再次确认：删除后截图附件一并清除')) return;
+    await api('/api/requirements/' + r.id, { method: 'DELETE' });
+    closeReq();
+    loadList(); loadMyWork();
+  };
+}
+
+function renderStatus() {
+  const cur = D.req.status;
+  const opts = Object.keys(ST).filter(s => s !== cur)
+    .map(s => '<option value="' + s + '">' + ST[s] + '</option>').join('');
+  $('s-next').innerHTML = opts;
+  $('dup-row').style.display = 'none';
+  $('s-note').value = ''; $('s-dup').value = ''; $('s-err').textContent = '';
+}
+$('s-next').addEventListener('change', () => {
+  $('dup-row').style.display = $('s-next').value === 'dup_closed' ? '' : 'none';
+});
+$('s-go').onclick = async () => {
+  $('s-err').textContent = '';
+  const to = $('s-next').value;
+  if (!to) { $('s-err').textContent = '请选择目标状态'; return; }
+  const body = { op: 'status', status: to, note: $('s-note').value };
+  if (to === 'dup_closed') {
+    const t = parseInt($('s-dup').value, 10);
+    if (!t) { $('s-err').textContent = '请填原单 ID'; return; }
+    body.duplicate_of = t;
+  }
+  const d = await api('/api/requirements/' + curReqId, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (d.ok) { loadReq(curReqId); loadList(); loadMyWork(); }
+  else { $('s-err').textContent = d.error || '失败'; }
+};
+
+function renderTags() {
+  const cur = D.tags.map(t => t.name);
+  $('tags').innerHTML = cur.map(t =>
+    '<span class="tag-chip">' + esc(t) + '<span class="x" data-t="' + esc(t) + '">✕</span></span>').join('')
+    || '<span class="sub">暂无标签</span>';
+}
+$('tags').addEventListener('click', e => {
+  if (!e.target.classList.contains('x')) return;
+  const next = D.tags.map(t => t.name).filter(t => t !== e.target.dataset.t);
+  saveTags(next);
+});
+$('tag-add').onclick = () => {
+  const v = $('tag-in').value.trim().slice(0, 30);
+  if (!v) return;
+  const cur = D.tags.map(t => t.name);
+  if (!cur.includes(v)) cur.push(v);
+  $('tag-in').value = '';
+  saveTags(cur);
+};
+async function saveTags(names) {
+  const d = await api('/api/requirements/' + curReqId, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'tags', tags: names }) });
+  if (d.ok) { loadReq(curReqId); loadList(); }
+}
+
+function renderChk() {
+  $('chk').innerHTML = D.checklist.length ? D.checklist.map(c => {
+    const opts = ['<option value="">未指派</option>']
+      .concat(users.map(us => '<option value="' + us.id + '"'
+        + (c.assignee_id === us.id ? ' selected' : '') + '>' + esc(us.display_name) + '</option>'));
+    return '<div class="chk-row ' + c.status + '">'
+      + '<span class="chk-dot ' + c.status + '" data-id="' + c.id + '" title="点击切换 待办→进行中→完成">'
+      + (c.status === 'done' ? '✓' : '') + '</span>'
+      + '<span class="ct">' + esc(c.content) + '</span>'
+      + '<select data-id="' + c.id + '" class="ck-as">' + opts.join('') + '</select>'
+      + '<span class="sub" style="cursor:pointer" data-del="' + c.id + '">✕</span></div>';
+  }).join('') : '<div class="sub">还没有工作项。建议按顺序拆：产品设计 → 前端开发 → 后端开发</div>';
+}
+$('chk').addEventListener('click', async e => {
+  if (e.target.classList.contains('chk-dot')) {
+    const to = e.target.classList.contains('todo') ? 'doing'
+      : e.target.classList.contains('doing') ? 'done' : 'todo';
+    await api('/api/checklist/' + e.target.dataset.id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: to }) });
+    loadReq(curReqId); loadList(); loadMyWork();
+  } else if (e.target.dataset.del) {
+    if (!confirm('删除该工作项？')) return;
+    await api('/api/checklist/' + e.target.dataset.del, { method: 'DELETE' });
+    loadReq(curReqId); loadList(); loadMyWork();
+  }
+});
+$('chk').addEventListener('change', async e => {
+  if (e.target.classList.contains('ck-as')) {
+    await api('/api/checklist/' + e.target.dataset.id, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assignee_id: e.target.value || null }) });
+    loadReq(curReqId); loadMyWork();
+  }
+});
+$('ck-add').onclick = async () => {
+  const content = $('ck-content').value.trim();
+  if (!content) return;
+  await api('/api/requirements/' + curReqId + '/checklist', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content, assignee_id: $('ck-assignee').value || null }) });
+  $('ck-content').value = '';
+  loadReq(curReqId); loadList(); loadMyWork();
+};
+
+function renderAtts() {
+  if (!D.attachments.length) return;
+  $('att-card').style.display = '';
+  $('atts').innerHTML = D.attachments.map(a =>
+    '<a href="/api/files/' + a.r2_key + '" target="_blank" style="text-align:center">'
+    + '<img class="thumb" src="/api/files/' + a.r2_key + '">'
+    + '<div class="sub" style="font-size:11px;max-width:88px;overflow:hidden;text-overflow:ellipsis">'
+    + esc(a.orig_name || '图片') + '</div></a>').join('');
+}
+
+function renderEvents() {
+  const CN = { todo: '待办', doing: '进行中', done: '完成' };
+  $('events').innerHTML = D.events.map(e => {
+    let body = '';
+    let j = null;
+    try { j = JSON.parse(e.detail); } catch (x) { j = null; }
+    if (e.action === 'comment') body = '<div class="body">' + esc(e.detail) + '</div>';
+    else if (e.action === 'status' && j) {
+      body = (j.from ? (ST[j.from] || j.from) + ' → ' : '')
+        + '<b>' + (ST[j.to] || j.to) + '</b>' + (j.note ? '：' + esc(j.note) : '');
+    } else if (e.action === 'checklist' && j) {
+      body = j.op === 'add' ? '添加：' + esc(j.content)
+        : j.op === 'delete' ? '删除：' + esc(j.content)
+        : esc(j.content || '') + ' ' + (CN[j.from] || j.from || '') + ' → ' + (CN[j.to] || j.to || '');
+    } else if (e.action === 'tag' && j) {
+      body = (j.tags || []).map(t => esc(t)).join('、');
+    } else if (e.action === 'create') {
+      body = '';
+    } else {
+      body = esc(e.detail);
+    }
+    return '<div class="evt"><span class="who">' + esc(e.actor_name || '-') + '</span>'
+      + '<span>' + (ACTN[e.action] || e.action) + '</span>'
+      + '<span class="when">' + fmtTime(e.created_at) + '</span>'
+      + (body ? '<div>' + body + '</div>' : '') + '</div>';
+  }).join('');
+}
+
+$('e-save').onclick = async () => {
+  $('e-err').textContent = '';
+  const d = await api('/api/requirements/' + curReqId, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'edit', title: $('e-title').value, description: $('e-desc').value,
+      type: $('e-type').value, urgency: $('e-urgency').value, project_id: $('e-project').value }) });
+  if (d.ok) { loadReq(curReqId); loadList(); loadMyWork(); }
+  else $('e-err').textContent = d.error || '失败';
+};
+$('c-go').onclick = async () => {
+  const text = $('c-text').value.trim();
+  if (!text) return;
+  const d = await api('/api/requirements/' + curReqId + '/comment', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }) });
+  if (d.ok) { $('c-text').value = ''; loadReq(curReqId); }
+};
+
 // ---------- 列表状态与 URL 同步（详情页返回后恢复筛选/页码） ----------
 function setSel(id, v) {
   const el = $(id);
@@ -202,6 +593,8 @@ function syncUrl() {
   const q = $('f-q').value.trim();
   if (q) sp.set('q', q);
   if (page > 1) sp.set('page', String(page));
+  const curReq = new URL(location.href).searchParams.get('req'); // 详情抽屉开着时保留 req 深链参数
+  if (curReq) sp.set('req', curReq);
   history.replaceState(null, '', '/index.html?' + sp.toString());
 }
 
@@ -217,11 +610,13 @@ async function loadList() {
   p.set('page', page);
   const d = await api('/api/requirements?' + p.toString());
   pages = d.pages;
+  listItems = d.items; // 供详情抽屉「上一条/下一条」按当前筛选顺序导航
   $('list').innerHTML = d.items.length
     ? d.items.map(itemHtml).join('')
     : '<div class="sub" style="padding:20px;text-align:center">没有符合条件的需求</div>';
   $('pager').style.display = d.total > 0 ? '' : 'none';
   $('pinfo').textContent = '第 ' + d.page + ' / ' + d.pages + ' 页 · 共 ' + d.total + ' 条';
+  if (drawerOpen) updateNavBtns();
 }
 
 async function loadMyWork() {
@@ -249,7 +644,7 @@ async function loadMyWork() {
   }
   $('mywork-card').style.display = '';
   $('mywork').innerHTML = d.items.map(c =>
-    '<a class="row-item" href="/req.html?id=' + c.req_id + '">'
+    '<a class="row-item" href="/req.html?id=' + c.req_id + '" onclick="rowClick(event, ' + c.req_id + ')">'
     + '<div class="ri-top"><span class="chk-dot ' + c.status + ' chk-btn" title="点击标记完成"'
     + ' onclick="toggleWorkItem(event, ' + c.id + ', this)"></span>'
     + '<span class="ri-title">' + esc(c.content) + '</span>'
@@ -332,7 +727,10 @@ $('mw-sync').addEventListener('change', () => loadMyWork());
 // bfcache 后退恢复时强制重拉数据，避免详情页改过的状态显示旧值
 window.addEventListener('pageshow', e => {
   if (!e.persisted) return;
-  if ($('view-list').style.display !== 'none') { loadList(); loadMyWork(); }
+  if ($('view-list').style.display !== 'none') {
+    loadList(); loadMyWork();
+    if (curReqId) loadReq(curReqId); // 抽屉开着时数据一并刷新
+  }
   else loadProjects();
 });
 // 离开列表页时记下滚动位置，回到列表后恢复
@@ -355,6 +753,12 @@ window.addEventListener('pagehide', () => {
     .map(s => '<option value="' + s + '">' + ST[s] + '</option>').join('');
   $('f-tag').innerHTML = '<option value="">全部</option>'
     + b.tags.map(t => '<option value="' + esc(t.name) + '">' + esc(t.name) + '</option>').join('');
+  // 详情抽屉依赖（编辑表单项目下拉 / 标签联想 / 工作项指派）
+  users = b.users;
+  $('e-project').innerHTML = b.projects.map(p => '<option value="' + p.id + '">' + esc(p.name) + '</option>').join('');
+  $('tag-list').innerHTML = b.tags.map(t => '<option value="' + esc(t.name) + '">').join('');
+  $('ck-assignee').innerHTML = '<option value="">未指派</option>'
+    + users.map(us => '<option value="' + us.id + '">' + esc(us.display_name) + '</option>').join('');
 
   // 从 URL 恢复上次离开时的筛选/页码（写入动作在 loadList 的 syncUrl 里）
   const SP = new URL(location.href).searchParams;
@@ -363,20 +767,22 @@ window.addEventListener('pagehide', () => {
   // 上次离开列表页的滚动位置（pagehide 里记录），取完即清
   const sy = parseInt(sessionStorage.getItem('sp_scroll') || '0', 10);
   sessionStorage.removeItem('sp_scroll');
+  const ureq = parseInt(SP.get('req'), 10);
 
-  if (URL_PROJECT) {
-    // 列表模式：URL 指定项目（all = 全部）
+  if (URL_PROJECT || ureq) {
+    // 列表模式：URL 指定项目（all = 全部）；带 req 深链（/req.html 老链接重定向而来）也进列表模式
     $('view-list').style.display = '';
-    setSel('f-project', URL_PROJECT !== 'all' ? URL_PROJECT : '');
+    setSel('f-project', URL_PROJECT && URL_PROJECT !== 'all' ? URL_PROJECT : '');
     setSel('f-status', SP.has('status') ? SP.get('status') : 'open'); // 默认只看未关闭
     if (SP.has('type')) setSel('f-type', SP.get('type'));
     if (SP.has('urgency')) setSel('f-urgency', SP.get('urgency'));
     if (SP.has('tag')) setSel('f-tag', SP.get('tag'));
     if (SP.has('q')) $('f-q').value = SP.get('q');
-    $('btn-new').href = URL_PROJECT !== 'all' ? '/new.html?project=' + URL_PROJECT : '/new.html';
+    $('btn-new').href = URL_PROJECT && URL_PROJECT !== 'all' ? '/new.html?project=' + URL_PROJECT : '/new.html';
     loadMyWork();
     await loadList();
-    if (sy > 0) window.scrollTo(0, sy);
+    if (ureq) syncDrawerFromUrl(); // 深链：自动打开详情抽屉
+    else if (sy > 0) window.scrollTo(0, sy);
   } else {
     // 项目视图（工作项侧栏只在列表模式，项目页不请求）
     $('view-projects').style.display = '';

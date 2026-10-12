@@ -120,7 +120,7 @@ $('title').addEventListener('input', () => {
     const d = await api('/api/dedup-suggest?q=' + encodeURIComponent(q));
     $('dedup').innerHTML = d.items.length
       ? '<div class="dedup-box">⚠️ 疑似重复，先看看这几条：'
-        + d.items.map(x => '<a href="/req.html?id=' + x.id + '">#' + x.id + ' ' + esc(x.title)
+        + d.items.map(x => '<a href="/index.html?project=all&req=' + x.id + '" target="_blank">#' + x.id + ' ' + esc(x.title)
           + '（' + (ST[x.status] || x.status) + '）</a>').join('')
         + '确属新问题请继续提交</div>'
       : '';
@@ -152,7 +152,7 @@ $('go').onclick = async () => {
         urgency: $('urgency').value, tags: [...tagSet], attachments
       })
     });
-    if (d.ok) { location.href = '/req.html?id=' + d.id; return; }
+    if (d.ok) { location.href = '/index.html?project=' + $('project').value + '&req=' + d.id; return; }
     $('err').textContent = d.error || '提交失败';
   } catch (e) { $('err').textContent = e.message || '网络错误'; }
   $('go').disabled = false; $('go').textContent = '提 交';
