@@ -370,6 +370,9 @@ $('dr-prev').onclick = () => navReq(-1);
 $('dr-next').onclick = () => navReq(1);
 $('dr-close').onclick = closeReq;
 $('dr-newwin').onclick = () => { if (curReqId) window.open('/req.html?id=' + curReqId); };
+$('drawer-overlay').addEventListener('click', e => {
+  if (e.target === $('drawer-overlay')) closeReq(); // 点遮罩空白处关闭，点抽屉内部不关
+});
 
 // Esc 关闭、←/→ 上下条（焦点在输入框时不抢按键）
 document.addEventListener('keydown', e => {
