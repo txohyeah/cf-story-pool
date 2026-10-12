@@ -100,7 +100,7 @@
       <button class="btn small" id="dr-next" title="下一条（→）">下一条 →</button>
       <span class="sub" id="dr-pos"></span>
       <span style="flex:1"></span>
-      <button class="btn small" id="dr-newwin" title="在新标签页打开完整页">↗ 新窗口</button>
+      <a class="btn small" id="dr-newwin" href="#" target="_blank" rel="noopener" title="在新标签页打开完整页">↗ 新窗口</a>
       <button class="btn small" id="dr-close" title="关闭（Esc）">✕ 关闭</button>
     </div>
 
@@ -350,6 +350,7 @@ function updateNavBtns() {
   $('dr-prev').disabled = !canPrev;
   $('dr-next').disabled = !canNext;
   $('dr-pos').textContent = i >= 0 ? '本页第 ' + (i + 1) + ' / ' + listItems.length + ' 条' : '';
+  if (curReqId) $('dr-newwin').href = '/req.html?id=' + curReqId; // 新窗口按钮跟随当前条目
 }
 async function navReq(delta) {
   if (!curReqId || !listItems.length) return;
@@ -369,7 +370,6 @@ async function navReq(delta) {
 $('dr-prev').onclick = () => navReq(-1);
 $('dr-next').onclick = () => navReq(1);
 $('dr-close').onclick = closeReq;
-$('dr-newwin').onclick = () => { if (curReqId) window.open('/req.html?id=' + curReqId); };
 $('drawer-overlay').addEventListener('click', e => {
   if (e.target === $('drawer-overlay')) closeReq(); // 点遮罩空白处关闭，点抽屉内部不关
 });
