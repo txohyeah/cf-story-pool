@@ -9,6 +9,7 @@
 <body>
 <div class="topbar">
   <span class="brand" style="cursor:pointer" onclick="goHome()">📥 需求池</span>
+  <a class="btn small" href="/index.html" id="btn-home" style="display:none">📁 项目列表</a>
   <a class="btn primary small" href="/new.html" id="btn-new">＋ 新需求</a>
   <span class="sp"></span>
   <span class="sub" id="who"></span>
@@ -51,8 +52,6 @@
           <label class="fld" style="min-width:120px"><span>标签</span><select id="f-tag"></select></label>
           <label class="fld" style="flex:2;min-width:160px"><span>搜索</span>
             <input type="text" id="f-q" placeholder="标题 / 描述关键词"></label>
-          <label class="fld" style="flex:0 0 auto"><span>&nbsp;</span>
-            <button class="btn small" onclick="openProjModal()" title="新建研发项目（列表页也可建）">＋ 新项目</button></label>
         </div>
         <div id="list"></div>
         <div class="pager" id="pager" style="display:none">
@@ -213,18 +212,8 @@ $('proj-save').onclick = async () => {
   if (!name) { $('proj-err').textContent = '请输入项目名称'; return; }
   const d = await api('/api/projects', { method: 'POST',
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
-  if (!d.ok) { $('proj-err').textContent = d.error || '创建失败'; return; }
-  closeProjModal();
-  if ($('view-list').style.display === 'none') { loadProjects(); return; } // 项目视图
-  // 列表模式：新项目塞进筛选下拉和抽屉编辑下拉，并直接切到该项目
-  for (const sel of ['f-project', 'e-project']) {
-    const o = document.createElement('option');
-    o.value = d.id; o.textContent = d.name;
-    $(sel).appendChild(o);
-  }
-  $('f-project').value = d.id;
-  refreshTagFilter(); // 新项目还没有标签，f-tag 归零
-  page = 1; loadList(); if ($('mw-sync').checked) loadMyWork();
+  if (d.ok) { closeProjModal(); loadProjects(); } // 建项目入口只在项目视图（列表页用顶栏「项目列表」返回后创建）
+  else $('proj-err').textContent = d.error || '创建失败';
 };
 $('proj-name').addEventListener('keydown', e => { if (e.key === 'Enter') $('proj-save').click(); });
 
@@ -786,6 +775,7 @@ window.addEventListener('pagehide', () => {
   if (URL_PROJECT || ureq) {
     // 列表模式：URL 指定项目（all = 全部）；带 req 深链时也进列表模式并自动弹抽屉
     $('view-list').style.display = '';
+    $('btn-home').style.display = ''; // 顶栏显式返回项目列表入口（点 logo 回首页太隐晦）
     setSel('f-project', URL_PROJECT && URL_PROJECT !== 'all' ? URL_PROJECT : '');
     setSel('f-status', SP.has('status') ? SP.get('status') : 'open'); // 默认只看未关闭
     if (SP.has('type')) setSel('f-type', SP.get('type'));
