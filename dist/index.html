@@ -221,7 +221,7 @@ $('proj-name').addEventListener('keydown', e => { if (e.key === 'Enter') $('proj
 function itemHtml(x) {
   const tags = (x.tags || []).map(t => '<span class="tag-chip">' + esc(t) + '</span>').join('');
   const tasks = x.open_tasks ? ' <span title="未完成工作项">🔨' + x.open_tasks + '</span>' : '';
-  return '<a class="row-item" href="/req.html?id=' + x.id + '" onclick="rowClick(event, ' + x.id + ')">'
+  return '<a class="row-item" href="/index.html?project=all&req=' + x.id + '" onclick="rowClick(event, ' + x.id + ')">'
     + '<div class="ri-top"><span class="rid">#' + x.id + '</span>'
     + '<span class="ri-title">' + esc(x.title) + '</span>'
     + (x.urgency === 'urgent' ? '<span class="badge ug-urgent">紧急</span>' : '')
@@ -275,7 +275,7 @@ const ACTN = { create:'📥 创建', status:'🔁 流转', comment:'💬 评论'
 let D = null, users = [], curReqId = 0, drawerOpen = false, drawerPushed = false, listItems = [];
 
 function rowClick(ev, id) {
-  // 修饰键 / 中键点击放行：浏览器默认在新标签打开 /req.html（由它重定向到列表+抽屉）
+  // 修饰键 / 中键点击放行：浏览器默认新标签打开 href（列表页 + 自动弹该条抽屉）
   if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button !== 0) return;
   ev.preventDefault();
   openReq(id);
@@ -350,7 +350,7 @@ function updateNavBtns() {
   $('dr-prev').disabled = !canPrev;
   $('dr-next').disabled = !canNext;
   $('dr-pos').textContent = i >= 0 ? '本页第 ' + (i + 1) + ' / ' + listItems.length + ' 条' : '';
-  if (curReqId) $('dr-newwin').href = '/req.html?id=' + curReqId; // 新窗口按钮跟随当前条目
+  if (curReqId) $('dr-newwin').href = '/index.html?project=all&req=' + curReqId; // 新窗口按钮跟随当前条目
 }
 async function navReq(delta) {
   if (!curReqId || !listItems.length) return;
@@ -647,7 +647,7 @@ async function loadMyWork() {
   }
   $('mywork-card').style.display = '';
   $('mywork').innerHTML = d.items.map(c =>
-    '<a class="row-item" href="/req.html?id=' + c.req_id + '" onclick="rowClick(event, ' + c.req_id + ')">'
+    '<a class="row-item" href="/index.html?project=all&req=' + c.req_id + '" onclick="rowClick(event, ' + c.req_id + ')">'
     + '<div class="ri-top"><span class="chk-dot ' + c.status + ' chk-btn" title="点击标记完成"'
     + ' onclick="toggleWorkItem(event, ' + c.id + ', this)"></span>'
     + '<span class="ri-title">' + esc(c.content) + '</span>'
@@ -773,7 +773,7 @@ window.addEventListener('pagehide', () => {
   const ureq = parseInt(SP.get('req'), 10);
 
   if (URL_PROJECT || ureq) {
-    // 列表模式：URL 指定项目（all = 全部）；带 req 深链（/req.html 老链接重定向而来）也进列表模式
+    // 列表模式：URL 指定项目（all = 全部）；带 req 深链时也进列表模式并自动弹抽屉
     $('view-list').style.display = '';
     setSel('f-project', URL_PROJECT && URL_PROJECT !== 'all' ? URL_PROJECT : '');
     setSel('f-status', SP.has('status') ? SP.get('status') : 'open'); // 默认只看未关闭
