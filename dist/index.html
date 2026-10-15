@@ -51,7 +51,7 @@
           </select></label>
           <label class="fld" style="min-width:120px"><span>标签</span><select id="f-tag"></select></label>
           <label class="fld" style="flex:2;min-width:160px"><span>搜索</span>
-            <input type="text" id="f-q" placeholder="标题 / 描述关键词"></label>
+            <input type="text" id="f-q" placeholder="标题 / 描述关键词；#编号直达"></label>
         </div>
         <div id="list"></div>
         <div class="pager" id="pager" style="display:none">
@@ -718,9 +718,35 @@ for (const id of ['pw-new', 'pw-new2']) {
 async function logout() { await api('/api/logout', { method: 'POST' }); location.href = '/login'; }
 
 let debTimer = null;
+// 编号直达：搜索框输 #181 / 181（全角＃也认）→ 存在即弹抽屉，不存在退回普通文本搜索
+function parseReqIdQuery() {
+  const m = $('f-q').value.trim().match(/^[#＃]?(\d+)$/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+async function jumpToReq(id) {
+  let d;
+  try { d = await api('/api/requirements/' + id); } catch (e) { d = { ok: false }; }
+  if (d.ok) {
+    $('f-q').value = ''; page = 1; $('f-q').blur();
+    openReq(id); loadList(); if ($('mw-sync').checked) loadMyWork();
+  } else {
+    page = 1; loadList(); if ($('mw-sync').checked) loadMyWork(); // 没这个编号：当普通关键词搜
+  }
+}
 $('f-q').addEventListener('input', () => {
   clearTimeout(debTimer);
-  debTimer = setTimeout(() => { page = 1; loadList(); if ($('mw-sync').checked) loadMyWork(); }, 400);
+  const id = parseReqIdQuery();
+  debTimer = setTimeout(() => {
+    if (id) { jumpToReq(id); return; } // 纯编号输入：不闪文本搜索，防抖后直达
+    page = 1; loadList(); if ($('mw-sync').checked) loadMyWork();
+  }, 400);
+});
+$('f-q').addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const id = parseReqIdQuery();
+  if (!id) return; // 普通文本：维持原防抖搜索不动
+  clearTimeout(debTimer);
+  jumpToReq(id);
 });
 for (const id of ['f-project', 'f-status', 'f-type', 'f-urgency', 'f-tag']) {
   $(id).addEventListener('change', () => { page = 1; loadList(); if ($('mw-sync').checked) loadMyWork(); });
