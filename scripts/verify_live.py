@@ -13,12 +13,14 @@ import urllib.error
 import urllib.request
 import zlib
 
+import requests
+
 try:
     import certifi
     import ssl
-    _CTX = ssl.create_default_context(cafile=certifi.where())
+    _CAFILE = certifi.where()
 except Exception:
-    _CTX = None
+    _CAFILE = None
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORKSPACE = os.path.dirname(os.path.dirname(ROOT))
@@ -56,29 +58,30 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 import ssl as _ssl
-if _CTX is not None:
-    _opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=_CTX))
-else:
-    _opener = urllib.request.build_opener(_NoRedirect)
+_SESSION = requests.Session()
+if _CAFILE:
+    _SESSION.verify = _CAFILE
+# requests 默认 UA 会被 CF Bot 防御拦（403），必须带浏览器 UA
+_SESSION.headers['User-Agent'] = UA
 
 
 def http(method, path, data=None, headers=None):
-    """返回 (status, resp_headers, body_bytes)。不跟随重定向；带超时+重试。"""
-    import json as _json
-    for attempt in range(3):
-        req = urllib.request.Request(BASE + path, method=method, data=data)
-        req.add_header('User-Agent', UA)
-        for k, v in (headers or {}).items():
-            req.add_header(k, v)
+    """返回 (status, resp_headers, body_bytes)。不跟随重定向。
+
+    Session 连接复用：pages.dev 链路抖动期每请求重握手易连环超时（坑册既定方案），
+    全套自检只握 1~2 次手；20s 超时 × 5 次重试 + 退避。
+    """
+    for attempt in range(5):
         try:
-            with _opener.open(req, timeout=30) as r:
-                return r.status, dict(r.headers), r.read()
-        except urllib.error.HTTPError as e:
-            return e.code, dict(e.headers), e.read()
-        except (urllib.error.URLError, OSError) as e:
-            if attempt == 2:
+            r = _SESSION.request(method, BASE + path, data=data, headers=headers,
+                                 timeout=20, allow_redirects=False)
+            return r.status_code, dict(r.headers), r.content
+        except requests.RequestException as e:
+            if attempt == 4:
                 raise
             print('  (网络重试 %d: %s)' % (attempt + 1, e))
+            import time as _time
+            _time.sleep(3 * (attempt + 1))
 
 
 def jreq(method, path, body=None, cookie=None):
