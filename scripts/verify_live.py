@@ -322,15 +322,23 @@ def main():
         check('有需求项目禁删', False, 'vpid 缺失，无法执行')
         check('空项目删除闭环', False, 'vpid 缺失，无法执行')
 
-    # 18.5 文档页闭环（v2 P0：md 文档 + 版本快照 + 评论绑版本 + 状态流转）
-    if vpid:
+    # 18.5 文档页闭环（v2 P0）——独立临时项目自建自清，避免依赖上方已删除的自检项目
+    s, d = jreq('POST', '/api/projects', {'name': '[verify] 文档项目'}, cookie=cookie)
+    dpid = d.get('id')
+    if not dpid:
+        # 重名残留或网络抖动兜底：按名查回复用
+        s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
+        found = [p for p in d2.get('projects', []) if p['name'] == '[verify] 文档项目']
+        dpid = found[0]['id'] if found else None
+    check('文档测试项目就绪', bool(dpid))
+    if dpid:
         s, d = jreq('POST', '/api/docs', {
-            'project_id': vpid, 'title': '[verify] 自检文档',
+            'project_id': dpid, 'title': '[verify] 自检文档',
             'content_md': '# v1 内容\n\n| 列A | 列B |\n|---|---|\n| 1 | 2 |'}, cookie=cookie)
         doc_id = d.get('id')
         if not doc_id:
             # 网络抖动兜底：POST 可能服务端已成功但响应丢失，按名查回（非幂等 POST 不盲重试）
-            s2, d2 = jreq('GET', '/api/docs?project_id=%d' % vpid, cookie=cookie)
+            s2, d2 = jreq('GET', '/api/docs?project_id=%d' % dpid, cookie=cookie)
             found = [x for x in d2.get('items', []) if x['title'] == '[verify] 自检文档']
             doc_id = found[0]['id'] if found else None
         check('文档创建', bool(doc_id))
@@ -354,12 +362,15 @@ def main():
             check('批准后编辑回草稿', d.get('doc', {}).get('status') == 'draft' and d['doc']['current_version'] == 3)
             s, d = jreq('GET', '/api/docs/%d/versions/1' % doc_id, cookie=cookie)
             check('历史版本回看 v1', s == 200 and d.get('content_md', '').startswith('# v1'))
-            s, d = jreq('GET', '/api/docs?project_id=%d' % vpid, cookie=cookie)
+            s, d = jreq('GET', '/api/docs?project_id=%d' % dpid, cookie=cookie)
             check('文档列表含自检文档', any(x['id'] == doc_id for x in d.get('items', [])))
             s, d = jreq('DELETE', '/api/docs/%d' % doc_id, cookie=cookie)
             check('测试文档清理', d.get('ok'))
+        s, d = jreq('DELETE', '/api/projects/%d' % dpid, cookie=cookie)
+        s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
+        check('文档测试项目清理闭环', not any(p['id'] == dpid for p in d2.get('projects', [])))
     else:
-        check('文档创建', False, 'vpid 缺失，无法执行')
+        check('文档创建', False, 'dpid 缺失，无法执行')
     for path, name in [('/docs.html', '文档列表页 200'), ('/doc.html', '文档详情页 200'),
                        ('/marked.min.js', 'md 渲染库 200'), ('/purify.min.js', 'XSS 消毒库 200')]:
         s, _h, _b = http('GET', path, headers={'Cookie': cookie})
