@@ -1051,14 +1051,18 @@ const TC_TYPES = ['positive', 'negative', 'boundary'];
 const TC_RESULTS = ['pass', 'fail', 'deviation'];
 
 async function nextTcCode(env, projectId) {
-  // tc_code 全局唯一：MAX 也按全局算（按项目算会跨项目撞号被迫跳时间戳，2026-10-17 实证）
+  // tc_code 全局唯一且一经分配不复用：持久计数器原子递增（MAX 法删除尾部编号后会复用，TC-015 执行实证）
   for (let i = 0; i < 5; i++) {
-    const row = (await env.DB.prepare(
-      `SELECT MAX(CAST(SUBSTR(tc_code, 4) AS INTEGER)) AS n FROM test_cases`).first());
-    const n = (row && row.n ? row.n : 0) + 1;
-    const code = 'TC-' + String(n).padStart(3, '0');
-    const dup = (await env.DB.prepare('SELECT id FROM test_cases WHERE tc_code = ?').bind(code).first());
-    if (!dup) return code;
+    const r = (await env.DB.prepare(
+      `UPDATE counters SET value = value + 1 WHERE name = 'tc_code' RETURNING value`).first());
+    const n = r && r.value ? r.value : 0;
+    if (!n) { // 兜底：计数器行丢失时重建
+      await env.DB.prepare("INSERT OR IGNORE INTO counters (name, value) VALUES ('tc_code', 1)").run();
+      const r2 = (await env.DB.prepare("SELECT value FROM counters WHERE name = 'tc_code'").first());
+      if (r2 && r2.value) return 'TC-' + String(r2.value).padStart(3, '0');
+      continue;
+    }
+    return 'TC-' + String(n).padStart(3, '0');
   }
   return 'TC-' + Date.now();
 }
