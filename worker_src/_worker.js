@@ -626,7 +626,7 @@ async function apiReqDelete(request, env, u, id) {
 }
 
 // ---------- 评论 ----------
-const COMMENT_CTYPES = ['normal', 'ac', 'testcase'];   // R7：普通/验收标准/测试用例
+const COMMENT_CTYPES = ['normal', 'ac'];   // R7 修订：普通/验收标准；"测试用例"类型移除防与用例库漂移，用例一律进用例库
 async function apiComment(request, env, u, id) {
   const r = (await env.DB.prepare('SELECT id FROM requirements WHERE id = ?').bind(id).first());
   if (!r) return json({ error: '需求不存在' }, 404);
