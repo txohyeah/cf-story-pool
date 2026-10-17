@@ -328,6 +328,11 @@ def main():
             'project_id': vpid, 'title': '[verify] 自检文档',
             'content_md': '# v1 内容\n\n| 列A | 列B |\n|---|---|\n| 1 | 2 |'}, cookie=cookie)
         doc_id = d.get('id')
+        if not doc_id:
+            # 网络抖动兜底：POST 可能服务端已成功但响应丢失，按名查回（非幂等 POST 不盲重试）
+            s2, d2 = jreq('GET', '/api/docs?project_id=%d' % vpid, cookie=cookie)
+            found = [x for x in d2.get('items', []) if x['title'] == '[verify] 自检文档']
+            doc_id = found[0]['id'] if found else None
         check('文档创建', bool(doc_id))
         if doc_id:
             s, d = jreq('GET', '/api/docs/%d' % doc_id, cookie=cookie)
