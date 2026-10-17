@@ -23,6 +23,21 @@
         <option value="normal">普通</option><option value="urgent">紧急</option>
       </select></label>
     </div>
+    <div class="fld-row" id="bug-fields" style="display:none">
+      <label class="fld" style="min-width:150px"><span>严重级别</span><select id="severity">
+        <option value="">未定级</option><option value="critical">关键</option>
+        <option value="major">重大</option><option value="general">一般</option>
+        <option value="watch">观察</option>
+      </select></label>
+      <label class="fld" style="min-width:150px"><span>根因分类</span><select id="root-cause">
+        <option value="">未填</option><option value="config">配置</option>
+        <option value="defect">缺陷</option><option value="usage">使用</option>
+        <option value="external">外部依赖</option><option value="data">数据</option>
+        <option value="requirement">需求有误</option>
+      </select></label>
+      <label class="fld" style="min-width:150px"><span>关联编号</span><input type="text" id="ref-code" maxlength="60" placeholder="ISS-2026-001（选填）"></label>
+    </div>
+    <div class="sub" id="bug-hint" style="display:none;font-size:12px;color:#a05a00">涉及权限、稽查轨迹、编号唯一性、数据更正留痕的问题，级别最低应定为「重大」</div>
     <label class="fld"><span>标题 *</span><input type="text" id="title" maxlength="200"
       placeholder="一句话说清问题，例：PDA 采集事件保存后列表不刷新"></label>
     <div id="dedup"></div>
@@ -133,6 +148,11 @@ $('go').onclick = async () => {
   const title = $('title').value.trim();
   if (!title) { $('err').textContent = '标题必填'; return; }
   if (!$('project').value) { $('err').textContent = '请选择研发项目'; return; }
+  // 红线提示：权限/稽查轨迹/编号唯一性/数据更正留痕类问题最低应定「重大」
+  if ($('type').value === 'bug' && ['general', 'watch'].includes($('severity').value)) {
+    const ok = confirm('涉及权限、稽查轨迹、编号唯一性、数据更正留痕的问题，级别最低应定为「重大」。\n确认以当前级别提交吗？');
+    if (!ok) return;
+  }
   $('go').disabled = true; $('go').textContent = '上传中…';
   try {
     const attachments = [];
@@ -148,6 +168,9 @@ $('go').onclick = async () => {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         project_id: +$('project').value, title,
+        severity: $('type').value === 'bug' ? $('severity').value : '',
+        root_cause: $('type').value === 'bug' ? $('root-cause').value : '',
+        ref_code: $('type').value === 'bug' ? $('ref-code').value.trim() : '',
         description: $('desc').value, type: $('type').value,
         urgency: $('urgency').value, tags: [...tagSet], attachments
       })
@@ -159,6 +182,12 @@ $('go').onclick = async () => {
 };
 
 // 标签按项目隔离：联想列表跟随所选项目
+// R3：类型切到 Bug 时显示严重级别/根因/关联编号
+$('type').addEventListener('change', () => {
+  const isBug = $('type').value === 'bug';
+  $('bug-fields').style.display = isBug ? '' : 'none';
+  $('bug-hint').style.display = isBug ? '' : 'none';
+});
 let allTags = [];
 function refreshNewTagDatalist() {
   const pid = $('project').value;

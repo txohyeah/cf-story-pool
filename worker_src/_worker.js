@@ -11,6 +11,8 @@ const STATUSES = ['submitted', 'confirmed', 'scheduled', 'fixed', 'verified', 'c
 const OPEN_STATUSES = ['submitted', 'confirmed', 'scheduled', 'fixed', 'verified'];
 const TYPES = ['bug', 'req', 'opt'];
 const URGENCIES = ['normal', 'urgent'];
+const SEVERITIES = ['critical', 'major', 'general', 'watch'];       // R3：关键/重大/一般/观察（CSV-14 口径）
+const ROOT_CAUSES = ['config', 'defect', 'usage', 'external', 'data', 'requirement']; // R3：根因六分类
 const MAX_ATTACH = 3;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const EXTS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
@@ -320,10 +322,15 @@ async function apiReqCreate(request, env, u) {
     if (!a || !validAttachToken(a.key)) return json({ error: '附件参数非法' }, 400);
   }
   const tagIds = await resolveTagIds(env, body.tags, projectId);
+  const severity = SEVERITIES.includes(body.severity) ? body.severity : '';
+  const rootCause = ROOT_CAUSES.includes(body.root_cause) ? body.root_cause : '';
+  const refCode = String(body.ref_code || '').trim().slice(0, 60);
+  const relatedCodes = JSON.stringify((Array.isArray(body.related_codes) ? body.related_codes : [])
+    .map(x => String(x).trim().slice(0, 60)).filter(Boolean).slice(0, 20));
   const ins = await env.DB.prepare(
-    `INSERT INTO requirements (project_id, title, description, type, urgency, status, channel, created_by, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'submitted', 'web', ?, ?)`)
-    .bind(projectId, title, description, type, urgency, u.userId, nowIso()).run();
+    `INSERT INTO requirements (project_id, title, description, type, urgency, status, channel, created_by, updated_at, severity, root_cause, ref_code, related_codes)
+     VALUES (?, ?, ?, ?, ?, 'submitted', 'web', ?, ?, ?, ?, ?, ?)`)
+    .bind(projectId, title, description, type, urgency, u.userId, nowIso(), severity, rootCause, refCode, relatedCodes).run();
   const reqId = ins.meta.last_row_id;
   const stmts = [];
   for (const tid of tagIds) {
@@ -365,6 +372,11 @@ async function apiReqList(request, env, u) {
   if (TYPES.includes(type)) { where.push('r.type = ?'); args.push(type); }
   const urgency = url.searchParams.get('urgency');
   if (URGENCIES.includes(urgency)) { where.push('r.urgency = ?'); args.push(urgency); }
+  const severity = url.searchParams.get('severity');
+  if (severity === 'none') { where.push("r.severity = ''"); }
+  else if (SEVERITIES.includes(severity)) { where.push('r.severity = ?'); args.push(severity); }
+  const ref = (url.searchParams.get('ref') || '').trim();
+  if (ref) { where.push('r.ref_code = ?'); args.push(ref.slice(0, 60)); }
   const tag = (url.searchParams.get('tag') || '').trim();
   if (tag) {
     where.push(`EXISTS (SELECT 1 FROM requirement_tags rt JOIN tags t ON t.id = rt.tag_id
@@ -391,6 +403,7 @@ async function apiReqList(request, env, u) {
     `SELECT COUNT(*) AS n FROM requirements r ${W}`).bind(...args).first()).n;
   const items = (await env.DB.prepare(
     `SELECT r.id, r.title, r.type, r.urgency, r.status, r.created_at, r.updated_at,
+            r.severity, r.root_cause, r.ref_code,
             p.name AS project_name, us.display_name AS creator_name
      FROM requirements r
      JOIN projects p ON p.id = r.project_id
@@ -442,6 +455,11 @@ async function apiMyWork(request, env, u) {
   if (TYPES.includes(type)) { where.push('r.type = ?'); args.push(type); }
   const urgency = url.searchParams.get('urgency');
   if (URGENCIES.includes(urgency)) { where.push('r.urgency = ?'); args.push(urgency); }
+  const severity = url.searchParams.get('severity');
+  if (severity === 'none') { where.push("r.severity = ''"); }
+  else if (SEVERITIES.includes(severity)) { where.push('r.severity = ?'); args.push(severity); }
+  const ref = (url.searchParams.get('ref') || '').trim();
+  if (ref) { where.push('r.ref_code = ?'); args.push(ref.slice(0, 60)); }
   const tag = (url.searchParams.get('tag') || '').trim();
   if (tag) {
     where.push(`EXISTS (SELECT 1 FROM requirement_tags rt JOIN tags t ON t.id = rt.tag_id
@@ -534,7 +552,14 @@ async function apiReqPatch(request, env, u, id) {
       title: body.title !== undefined ? String(body.title).trim().slice(0, 200) : r.title,
       description: body.description !== undefined ? String(body.description).slice(0, 5000) : r.description,
       type: TYPES.includes(body.type) ? body.type : r.type,
-      urgency: URGENCIES.includes(body.urgency) ? body.urgency : r.urgency
+      urgency: URGENCIES.includes(body.urgency) ? body.urgency : r.urgency,
+      severity: body.severity !== undefined ? (SEVERITIES.includes(body.severity) ? body.severity : '') : r.severity,
+      root_cause: body.root_cause !== undefined ? (ROOT_CAUSES.includes(body.root_cause) ? body.root_cause : '') : r.root_cause,
+      ref_code: body.ref_code !== undefined ? String(body.ref_code).trim().slice(0, 60) : r.ref_code,
+      related_codes: body.related_codes !== undefined
+        ? JSON.stringify((Array.isArray(body.related_codes) ? body.related_codes : [])
+            .map(x => String(x).trim().slice(0, 60)).filter(Boolean).slice(0, 20))
+        : (r.related_codes || '[]')
     };
     if (body.project_id !== undefined) {
       const pid = parseInt(body.project_id, 10);
@@ -546,9 +571,11 @@ async function apiReqPatch(request, env, u, id) {
     }
     if (!next.title) return json({ error: '标题不能为空' }, 400);
     await env.DB.prepare(
-      `UPDATE requirements SET title = ?, description = ?, type = ?, urgency = ?, project_id = ?, updated_at = ?
+      `UPDATE requirements SET title = ?, description = ?, type = ?, urgency = ?, project_id = ?, updated_at = ?,
+       severity = ?, root_cause = ?, ref_code = ?, related_codes = ?
        WHERE id = ?`)
-      .bind(next.title, next.description, next.type, next.urgency, next.project_id, nowIso(), id).run();
+      .bind(next.title, next.description, next.type, next.urgency, next.project_id, nowIso(),
+            next.severity, next.root_cause, next.ref_code, next.related_codes, id).run();
     await env.DB.prepare(
       `INSERT INTO events (req_id, actor_id, action, detail) VALUES (?, ?, 'edit', '')`)
       .bind(id, u.userId).run();
@@ -847,6 +874,85 @@ async function apiDocDelete(request, env, u, id) {
   return json({ ok: true });
 }
 
+// ---------- R2 筛选导出（CSV，门禁内；CSV-14 五维度统计取数口） ----------
+async function apiExport(request, env, u) {
+  const url = new URL(request.url);
+  const where = []; const args = [];
+  const project = parseInt(url.searchParams.get('project'), 10);
+  if (project) { where.push('r.project_id = ?'); args.push(project); }
+  const status = (url.searchParams.get('status') || '').trim();
+  if (status === 'open') { where.push(`r.status NOT IN ('closed','dup_closed')`); }
+  else if (status) {
+    const ss = status.split(',').filter(x => STATUSES.includes(x));
+    if (ss.length) { where.push(`r.status IN (${ss.map(() => '?').join(',')})`); args.push(...ss); }
+  }
+  const type = url.searchParams.get('type');
+  if (TYPES.includes(type)) { where.push('r.type = ?'); args.push(type); }
+  const severity = url.searchParams.get('severity');
+  if (severity === 'none') { where.push("r.severity = ''"); }
+  else if (SEVERITIES.includes(severity)) { where.push('r.severity = ?'); args.push(severity); }
+  const tag = (url.searchParams.get('tag') || '').trim();
+  if (tag) {
+    where.push(`EXISTS (SELECT 1 FROM requirement_tags rt JOIN tags t ON t.id = rt.tag_id
+      WHERE rt.req_id = r.id AND t.name = ?)`);
+    args.push(tag);
+  }
+  const W = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  const rows = (await env.DB.prepare(
+    `SELECT r.id, r.title, r.type, r.urgency, r.status, r.severity, r.root_cause, r.ref_code,
+            r.created_at, us.display_name AS creator, p.name AS project_name
+     FROM requirements r
+     JOIN projects p ON p.id = r.project_id
+     LEFT JOIN users us ON us.id = r.created_by
+     ${W} ORDER BY r.id ASC LIMIT 5000`).bind(...args).all()).results;
+  const ids = rows.map(x => x.id);
+  const acMap = new Map();
+  if (ids.length) {
+    const ph = ids.map(() => '?').join(',');
+    const evs = (await env.DB.prepare(
+      `SELECT req_id, detail FROM events
+       WHERE req_id IN (${ph}) AND action = 'comment' AND detail LIKE '【验收标准】%' ORDER BY id`)
+      .bind(...ids).all()).results;
+    for (const e of evs) {
+      if (!acMap.has(e.req_id)) acMap.set(e.req_id, []);
+      acMap.get(e.req_id).push(e.detail.replace(/^【验收标准】\s*/, ''));
+    }
+  }
+  const SEV = { critical: '关键', major: '重大', general: '一般', watch: '观察' };
+  const RC = { config: '配置', defect: '缺陷', usage: '使用', external: '外部依赖', data: '数据', requirement: '需求有误' };
+  const TY = { bug: 'bug', req: '需求', opt: '优化' };
+  const ST = { submitted: '待复现', confirmed: '已确认', scheduled: '已排期', fixed: '已修复', verified: '已验证', closed: '关闭', dup_closed: '重复关闭' };
+  const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""').replace(/\r?\n/g, '\\n') + '"';
+  const lines = [['编号','标题','类型','状态','紧急度','严重级别','根因分类','提单人','创建日期','关联编号','验收标准汇总'].map(cell).join(',')];
+  for (const x of rows) {
+    lines.push([x.id, x.title, TY[x.type] || x.type, ST[x.status] || x.status,
+      x.urgency === 'urgent' ? '紧急' : '一般', SEV[x.severity] || '', RC[x.root_cause] || '',
+      x.creator || '', (x.created_at || '').slice(0, 10), x.ref_code || '',
+      (acMap.get(x.id) || []).join(' ||| ')].map(cell).join(','));
+  }
+  const cnt = key => {
+    const m = new Map();
+    for (const x of rows) { const k = key(x); m.set(k, (m.get(k) || 0) + 1); }
+    return [...m.entries()].map(([k, v]) => `${k}:${v}`).join(' | ') || '无';
+  };
+  const stats = [
+    ['== 统计汇总 ==', ''],
+    ['导出条数', String(rows.length)],
+    ['按状态', cnt(x => ST[x.status] || x.status)],
+    ['按严重级别', cnt(x => SEV[x.severity] || '未定级')],
+    ['按根因分类', cnt(x => RC[x.root_cause] || '未填')],
+    ['按项目', cnt(x => x.project_name)],
+    ['按类型', cnt(x => TY[x.type] || x.type)]
+  ];
+  for (const [k, v] of stats) lines.push([cell(k), cell(v)].join(','));
+  const csv = '\uFEFF' + lines.join('\r\n');
+  const h = new Headers();
+  h.set('Content-Type', 'text/csv; charset=utf-8');
+  h.set('Content-Disposition', `attachment; filename="export-${nowIso().slice(0, 10)}.csv"`);
+  h.set('Cache-Control', 'no-store');
+  return new Response(csv, { status: 200, headers: h });
+}
+
 // ---------- 去重提示（LIKE 子串） ----------
 async function apiDedup(request, env) {
   const url = new URL(request.url);
@@ -887,6 +993,7 @@ export default {
       if (p === '/api/tags' && method === 'GET') return apiTagList(request, env);
       if (p === '/api/my-work') return apiMyWork(request, env, u);
       if (p === '/api/dedup-suggest') return apiDedup(request, env);
+      if (p === '/api/export' && method === 'GET') return apiExport(request, env, u);
       if (p === '/api/docs' && method === 'GET') return apiDocList(request, env);
       if (p === '/api/docs' && method === 'POST') return apiDocCreate(request, env, u);
       const dm = p.match(/^\/api\/docs\/(\d+)$/);

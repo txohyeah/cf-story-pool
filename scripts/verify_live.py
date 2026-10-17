@@ -366,6 +366,36 @@ def main():
             check('文档列表含自检文档', any(x['id'] == doc_id for x in d.get('items', [])))
             s, d = jreq('DELETE', '/api/docs/%d' % doc_id, cookie=cookie)
             check('测试文档清理', d.get('ok'))
+        # ---- R3/R2：单据字段增强 + 筛选导出 ----
+        if dpid:
+            s, d = jreq('POST', '/api/requirements', {
+                'project_id': dpid, 'title': '[verify] Bug探针', 'type': 'bug',
+                'severity': 'major', 'root_cause': 'defect', 'ref_code': 'ISS-2099-001',
+                'description': 'R3验证'}, cookie=cookie)
+            bid = d.get('id')
+            if not bid:
+                s2, d2 = jreq('GET', '/api/requirements?project=%d&type=bug' % dpid, cookie=cookie)
+                found = [x for x in d2.get('items', []) if x['title'] == '[verify] Bug探针']
+                bid = found[0]['id'] if found else None
+            check('R3 bug建单带字段', bool(bid))
+            if bid:
+                s, d = jreq('GET', '/api/requirements/%d' % bid, cookie=cookie)
+                rq = d.get('req', {})
+                check('R3 字段回读', rq.get('severity') == 'major' and rq.get('root_cause') == 'defect'
+                      and rq.get('ref_code') == 'ISS-2099-001')
+                s, d = jreq('PATCH', '/api/requirements/%d' % bid, {'op': 'edit', 'severity': 'critical'}, cookie=cookie)
+                s, d = jreq('GET', '/api/requirements/%d' % bid, cookie=cookie)
+                check('R3 PATCH severity', d.get('req', {}).get('severity') == 'critical')
+                s, d = jreq('GET', '/api/requirements?project=%d&severity=critical' % dpid, cookie=cookie)
+                check('R3 severity筛选', any(x['id'] == bid for x in d.get('items', [])))
+                s, d = jreq('GET', '/api/requirements?ref=ISS-2099-001', cookie=cookie)
+                check('R3 ref_code精确查询', any(x['id'] == bid for x in d.get('items', [])))
+                s2, _h, raw = http('GET', '/api/export?project=%d' % dpid, headers={'Cookie': cookie})
+                txt = raw.decode('utf-8-sig', errors='replace')
+                check('R2 导出CSV（BOM+探针+表头+统计）', s2 == 200 and txt.startswith('\ufeff')
+                      and '[verify] Bug探针' in txt and '验收标准汇总' in txt and '== 统计汇总 ==' in txt)
+                s, d = jreq('DELETE', '/api/requirements/%d' % bid, cookie=cookie)
+                check('R3 探针清理', d.get('ok'))
         s, d = jreq('DELETE', '/api/projects/%d' % dpid, cookie=cookie)
         s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
         check('文档测试项目清理闭环', not any(p['id'] == dpid for p in d2.get('projects', [])))
