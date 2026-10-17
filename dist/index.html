@@ -192,11 +192,10 @@
         <label class="fld" style="min-width:150px"><span>类型</span><select id="c-ctype">
           <option value="normal">普通评论</option>
           <option value="ac">验收标准</option>
-          <option value="testcase">测试用例</option>
         </select></label>
         <label class="fld" style="min-width:130px"><span>只看类型</span><select id="c-filter">
           <option value="">全部</option><option value="normal">普通</option>
-          <option value="ac">验收标准</option><option value="testcase">测试用例</option>
+          <option value="ac">验收标准</option>
         </select></label>
       </div>
       <textarea id="c-text" rows="3" placeholder="补充信息、确认结果…"></textarea>
@@ -583,8 +582,8 @@ function renderAtts() {
 function renderEvents() {
   const CN = { todo: '待办', doing: '进行中', done: '完成' };
   const cf = $('c-filter') ? $('c-filter').value : '';
-  const CTN = { ac: '验收标准', testcase: '测试用例' };
-  const CTC = { ac: '#4f46e5', testcase: '#0f766e' };
+  const CTN = { ac: '验收标准' };
+  const CTC = { ac: '#4f46e5' };
   $('events').innerHTML = D.events
     .filter(e => !(e.action === 'comment' && cf && (e.ctype || 'normal') !== cf))
     .map(e => {

@@ -465,15 +465,16 @@ def main():
                 s, d = jreq('DELETE', '/api/releases/%d' % rel2, cookie=cookie)
             s2, _h, _b = http('GET', '/testcases.html', headers={'Cookie': cookie})
             check('R5 用例页 200', s2 == 200)
-            # ---- R7：评论类型（普通/验收标准/测试用例）----
+            # ---- R7：评论类型（普通/验收标准；"测试用例"类型已移除防与用例库漂移）----
             s, d = jreq('POST', '/api/requirements', {'project_id': dpid, 'title': '[verify] R7探针', 'type': 'req'}, cookie=cookie)
             r7 = d.get('id')
             if r7:
                 s, d = jreq('POST', '/api/requirements/%d/comment' % r7, {'text': '导出应含此条', 'ctype': 'ac'}, cookie=cookie)
-                s, d = jreq('POST', '/api/requirements/%d/comment' % r7, {'text': '步骤：打开登录页', 'ctype': 'testcase'}, cookie=cookie)
+                s, d = jreq('POST', '/api/requirements/%d/comment' % r7, {'text': '枚举外类型应回退普通', 'ctype': 'testcase'}, cookie=cookie)
                 s, d = jreq('GET', '/api/requirements/%d' % r7, cookie=cookie)
                 cms = [e for e in d.get('events', []) if e.get('action') == 'comment']
-                check('R7 评论类型入库', len(cms) == 2 and {c.get('ctype') for c in cms} == {'ac', 'testcase'})
+                check('R7 评论类型入库(枚举外回退normal)', len(cms) == 2
+                      and {c.get('ctype') for c in cms} == {'ac', 'normal'})
                 s2, _h, raw = http('GET', '/api/export?project=%d' % dpid, headers={'Cookie': cookie})
                 txt = raw.decode('utf-8-sig', errors='replace')
                 check('R7 导出验收标准汇总(ctype=ac口径)', '导出应含此条' in txt)
