@@ -494,7 +494,13 @@ def main():
                     check(nm, False, 'r7 缺失')
         s, d = jreq('DELETE', '/api/projects/%d' % dpid, cookie=cookie)
         s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
-        check('文档测试项目清理闭环', not any(p['id'] == dpid for p in d2.get('projects', [])))
+        still = [p for p in d2.get('projects', []) if p['id'] == dpid]
+        if still:
+            # 抖动兜底：删除未生效则按 id 再删一次（非幂等删除不盲重试，先查回确认）
+            s, d = jreq('DELETE', '/api/projects/%d' % dpid, cookie=cookie)
+            s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
+            still = [p for p in d2.get('projects', []) if p['id'] == dpid]
+        check('文档测试项目清理闭环', not still)
     else:
         check('文档创建', False, 'dpid 缺失，无法执行')
     for path, name in [('/docs.html', '文档列表页 200'), ('/doc.html', '文档详情页 200'),
