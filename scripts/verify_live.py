@@ -440,6 +440,8 @@ def main():
                             {'steps_md': '前置：无\n步骤：正确账密登录（改）\n预期：进入工作台', 'change_summary': '自检升版'}, cookie=cookie)
                 check('R5 编辑升版 v2', d.get('ok') and d.get('version') == 2)
                 s, d = jreq('PATCH', '/api/testcases/%d' % tc_id, {'op': 'status', 'status': 'approved'}, cookie=cookie)
+                s, d = jreq('GET', '/api/testcases/%d' % tc_id, cookie=cookie)
+                check('R5 批准落 approved_by', d.get('tc', {}).get('status') == 'approved' and d['tc'].get('approved_by'))
                 s, d = jreq('PATCH', '/api/testcases/%d' % tc_id, {'steps_md': '批准后改动'}, cookie=cookie)
                 s, d = jreq('GET', '/api/testcases/%d' % tc_id, cookie=cookie)
                 check('R5 批准后编辑回草稿', d.get('tc', {}).get('status') == 'draft')

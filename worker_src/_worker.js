@@ -1107,9 +1107,10 @@ async function apiTcCreate(request, env, u) {
 
 async function apiTcDetail(request, env, id) {
   const t = (await env.DB.prepare(
-    `SELECT t.*, u.display_name AS creator, r.title AS related_req_title
+    `SELECT t.*, u.display_name AS creator, ua.display_name AS approver, r.title AS related_req_title
      FROM test_cases t
      LEFT JOIN users u ON u.id = t.created_by
+     LEFT JOIN users ua ON ua.id = t.approved_by
      LEFT JOIN requirements r ON r.id = t.related_req
      WHERE t.id = ?`).bind(id).first());
   if (!t) return json({ error: '用例不存在' }, 404);
@@ -1137,7 +1138,13 @@ async function apiTcPatch(request, env, u, id) {
   if (body.op === 'status') {
     const st = body.status;
     if (st !== 'approved' && st !== 'draft') return json({ error: '非法状态' }, 400);
-    await env.DB.prepare('UPDATE test_cases SET status = ?, updated_at = ? WHERE id = ?').bind(st, now, id).run();
+    if (st === 'approved') {
+      await env.DB.prepare('UPDATE test_cases SET status = ?, approved_by = ?, approved_at = ?, updated_at = ? WHERE id = ?')
+        .bind(st, u.userId, now, now, id).run();
+    } else {
+      await env.DB.prepare('UPDATE test_cases SET status = ?, approved_by = NULL, approved_at = NULL, updated_at = ? WHERE id = ?')
+        .bind(st, now, id).run();
+    }
     return json({ ok: true });
   }
   // edit：steps_md 变化 → 新版本快照；approved 用例编辑自动回 draft
@@ -1161,7 +1168,7 @@ async function apiTcPatch(request, env, u, id) {
   }
   await env.DB.prepare(
     `UPDATE test_cases SET title = ?, steps_md = ?, risk = ?, ctype = ?, covers_urs = ?, related_req = ?,
-     status = ?, current_version = ?, updated_at = ? WHERE id = ?`)
+     status = ?, approved_by = NULL, approved_at = NULL, current_version = ?, updated_at = ? WHERE id = ?`)
     .bind(next.title, next.steps_md, next.risk, next.ctype, next.covers_urs, next.related_req,
           backToDraft ? 'draft' : t.status, newVer, now, id).run();
   return json({ ok: true, version: newVer, status: backToDraft ? 'draft' : t.status });
