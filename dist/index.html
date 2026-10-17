@@ -12,6 +12,7 @@
   <a class="btn small" href="/index.html" id="btn-home" style="display:none">📁 项目列表</a>
   <a class="btn primary small" href="/new.html" id="btn-new">＋ 新需求</a>
   <a class="btn small" href="/docs.html" id="btn-docs">📄 文档</a>
+  <a class="btn small" href="javascript:exportCsv()" id="btn-export">⬇ 导出</a>
   <span class="sp"></span>
   <span class="sub" id="who"></span>
   <a class="btn small" href="javascript:openPwdModal()">改密码</a>
@@ -49,6 +50,11 @@
           </select></label>
           <label class="fld" style="min-width:100px"><span>紧急</span><select id="f-urgency">
             <option value="">全部</option><option value="urgent">仅紧急</option>
+          </select></label>
+          <label class="fld" style="min-width:100px"><span>级别</span><select id="f-severity">
+            <option value="">全部</option><option value="critical">关键</option>
+            <option value="major">重大</option><option value="general">一般</option>
+            <option value="watch">观察</option><option value="none">未定级</option>
           </select></label>
           <label class="fld" style="min-width:120px"><span>标签</span><select id="f-tag"></select></label>
           <label class="fld" style="flex:2;min-width:160px"><span>搜索</span>
@@ -120,6 +126,21 @@
           <option value="normal">普通</option><option value="urgent">紧急</option>
         </select></label>
       </div>
+      <div class="fld-row">
+        <label class="fld"><span>严重级别</span><select id="e-severity">
+          <option value="">未定级</option><option value="critical">关键</option>
+          <option value="major">重大</option><option value="general">一般</option>
+          <option value="watch">观察</option>
+        </select></label>
+        <label class="fld"><span>根因分类</span><select id="e-root-cause">
+          <option value="">未填</option><option value="config">配置</option>
+          <option value="defect">缺陷</option><option value="usage">使用</option>
+          <option value="external">外部依赖</option><option value="data">数据</option>
+          <option value="requirement">需求有误</option>
+        </select></label>
+        <label class="fld"><span>关联编号</span><input type="text" id="e-ref-code" maxlength="60" placeholder="ISS-2026-001"></label>
+      </div>
+      <div class="sub" style="font-size:12px;color:#a05a00">涉及权限、稽查轨迹、编号唯一性、数据更正留痕的问题，级别最低应定为「重大」</div>
       <button class="btn primary" id="e-save">保存修改</button>
       <div class="err" id="e-err"></div>
     </div>
@@ -181,6 +202,9 @@ const $ = id => document.getElementById(id);
 const ST = { submitted:'待复现确认', confirmed:'已确认', scheduled:'已排期', fixed:'已修复',
   verified:'已验证', closed:'已关闭', dup_closed:'重复关闭' };
 const TY = { bug:'Bug', req:'需求', opt:'优化' };
+const SEVN = { critical:'关键', major:'重大', general:'一般', watch:'观察' };
+const SEVC = { critical:'#b91c1c', major:'#c2410c', general:'#a16207', watch:'#64748b' };
+const RCN = { config:'配置', defect:'缺陷', usage:'使用', external:'外部依赖', data:'数据', requirement:'需求有误' };
 let page = 1, pages = 1, me = null;
 const URL_PROJECT = new URL(location.href).searchParams.get('project');
 
@@ -401,6 +425,11 @@ function renderInfo() {
     + '<span>提单：' + esc(r.creator_name || '-') + '</span>'
     + '<span>' + fmtTime(r.created_at) + '</span>'
     + '<span>通道：' + esc(r.channel) + '</span></div>'
+    + ((r.severity || r.root_cause || r.ref_code) ? '<div class="ri-meta" style="margin-top:4px">'
+      + (r.severity ? '<span class="badge" style="background:' + (SEVC[r.severity] || '#eee') + ';color:#fff">' + (SEVN[r.severity] || r.severity) + '</span>' : '')
+      + (r.root_cause ? '<span>根因：' + (RCN[r.root_cause] || r.root_cause) + '</span>' : '')
+      + (r.ref_code ? '<span>关联编号：' + esc(r.ref_code) + '</span>' : '')
+      + '</div>' : '')
     + (r.description ? '<div style="margin-top:10px;white-space:pre-wrap">' + esc(r.description) + '</div>' : '')
     + dup
     + '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">'
@@ -414,6 +443,9 @@ function renderInfo() {
       $('e-desc').value = r.description || '';
       $('e-type').value = r.type;
       $('e-urgency').value = r.urgency;
+      $('e-severity').value = r.severity || '';
+      $('e-root-cause').value = r.root_cause || '';
+      $('e-ref-code').value = r.ref_code || '';
       setSel('e-project', String(r.project_id));
       $('e-err').textContent = '';
     }
@@ -568,7 +600,8 @@ $('e-save').onclick = async () => {
   const d = await api('/api/requirements/' + curReqId, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ op: 'edit', title: $('e-title').value, description: $('e-desc').value,
-      type: $('e-type').value, urgency: $('e-urgency').value, project_id: $('e-project').value }) });
+      type: $('e-type').value, urgency: $('e-urgency').value, project_id: $('e-project').value,
+      severity: $('e-severity').value, root_cause: $('e-root-cause').value, ref_code: $('e-ref-code').value.trim() }) });
   if (d.ok) { loadReq(curReqId); loadList(); loadMyWork(); }
   else $('e-err').textContent = d.error || '失败';
 };
@@ -602,13 +635,24 @@ function syncUrl() {
   history.replaceState(null, '', '/index.html?' + sp.toString());
 }
 
-async function loadList() {
-  syncUrl();
+// R2：按当前筛选条件导出 CSV（门禁内，浏览器直接下载）
+function exportCsv() {
   const p = new URLSearchParams();
   if ($('f-project').value) p.set('project', $('f-project').value);
   if ($('f-status').value) p.set('status', $('f-status').value);
   if ($('f-type').value) p.set('type', $('f-type').value);
+  if ($('f-severity').value) p.set('severity', $('f-severity').value);
+  if ($('f-tag').value) p.set('tag', $('f-tag').value);
+  location.href = '/api/export?' + p.toString();
+}
+
+async function loadList() {
+  syncUrl();
+  const p = new URLSearchParams();  if ($('f-project').value) p.set('project', $('f-project').value);
+  if ($('f-status').value) p.set('status', $('f-status').value);
+  if ($('f-type').value) p.set('type', $('f-type').value);
   if ($('f-urgency').value) p.set('urgency', $('f-urgency').value);
+  if ($('f-severity').value) p.set('severity', $('f-severity').value === 'none' ? 'none' : $('f-severity').value);
   if ($('f-tag').value) p.set('tag', $('f-tag').value);
   if ($('f-q').value.trim()) p.set('q', $('f-q').value.trim());
   p.set('page', page);
@@ -720,9 +764,21 @@ async function logout() { await api('/api/logout', { method: 'POST' }); location
 
 let debTimer = null;
 // 编号直达：搜索框输 #181 / 181（全角＃也认）→ 存在即弹抽屉，不存在退回普通文本搜索
+// R3：ISS-/CR-/DEV-/EV- 前缀（如 ISS-2026-001）→ 按 ref_code 精确查，命中弹抽屉
 function parseReqIdQuery() {
   const m = $('f-q').value.trim().match(/^[#＃]?(\d+)$/);
   return m ? parseInt(m[1], 10) : 0;
+}
+function parseRefQuery() {
+  const m = $('f-q').value.trim().match(/^(?:ISS|CR|DEV|EV|TC)-[\w-]{1,40}$/i);
+  return m ? m[0].toUpperCase() : '';
+}
+async function jumpToRef(code) {
+  const d = await api('/api/requirements?ref=' + encodeURIComponent(code) + '&page_size=1');
+  const hit = d.items && d.items[0];
+  $('f-q').value = ''; page = 1; $('f-q').blur();
+  if (hit) { openReq(hit.id); } else { loadList(); }
+  if ($('mw-sync').checked) loadMyWork();
 }
 async function jumpToReq(id) {
   let d;
@@ -737,19 +793,22 @@ async function jumpToReq(id) {
 $('f-q').addEventListener('input', () => {
   clearTimeout(debTimer);
   const id = parseReqIdQuery();
+  const ref = parseRefQuery();
   debTimer = setTimeout(() => {
     if (id) { jumpToReq(id); return; } // 纯编号输入：不闪文本搜索，防抖后直达
+    if (ref) { jumpToRef(ref); return; } // 关联编号（ISS-xxx 等）：按 ref_code 精确查
     page = 1; loadList(); if ($('mw-sync').checked) loadMyWork();
   }, 400);
 });
 $('f-q').addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
   const id = parseReqIdQuery();
-  if (!id) return; // 普通文本：维持原防抖搜索不动
+  const ref = parseRefQuery();
+  if (!id && !ref) return; // 普通文本：维持原防抖搜索不动
   clearTimeout(debTimer);
-  jumpToReq(id);
+  if (id) jumpToReq(id); else jumpToRef(ref);
 });
-for (const id of ['f-project', 'f-status', 'f-type', 'f-urgency', 'f-tag']) {
+for (const id of ['f-project', 'f-status', 'f-type', 'f-urgency', 'f-severity', 'f-tag']) {
   $(id).addEventListener('change', () => { page = 1; loadList(); if ($('mw-sync').checked) loadMyWork(); });
 }
 // 项目切换 → 标签选项按项目过滤（标签与项目隔离）
