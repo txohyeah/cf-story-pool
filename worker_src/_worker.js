@@ -508,7 +508,7 @@ async function apiReqDetail(request, env, u, id) {
        FROM checklist_items c LEFT JOIN users us ON us.id = c.assignee_id
        WHERE c.req_id = ? ORDER BY c.sort_order, c.id`).bind(id).all(),
     env.DB.prepare(
-      `SELECT e.id, e.action, e.detail, e.created_at, us.display_name AS actor_name
+      `SELECT e.id, e.action, e.detail, e.created_at, e.ctype, us.display_name AS actor_name
        FROM events e LEFT JOIN users us ON us.id = e.actor_id
        WHERE e.req_id = ? ORDER BY e.created_at ASC, e.id ASC`).bind(id).all(),
     r.duplicate_of
