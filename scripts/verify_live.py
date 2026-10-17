@@ -424,6 +424,45 @@ def main():
                 check('R4 版本清理', False, 'rel_id 缺失')
             s2, _h, _b = http('GET', '/releases.html', headers={'Cookie': cookie})
             check('R4 版本页 200', s2 == 200)
+            # ---- R5+R6：用例库 + 执行记录 ----
+            s, d = jreq('POST', '/api/releases', {'project_id': dpid, 'version': 'v0.0-tc'}, cookie=cookie)
+            rel2 = d.get('id')
+            s, d = jreq('POST', '/api/testcases', {'project_id': dpid, 'title': '[verify] 登录正向用例',
+                'steps_md': '前置：无\n步骤：正确账密登录\n预期：进入工作台', 'risk': 'high',
+                'ctype': 'positive'}, cookie=cookie)
+            tc_id = d.get('id')
+            tc_code = d.get('tc_code')
+            check('R5 用例创建+自动编号', bool(tc_id) and bool(tc_code) and tc_code.startswith('TC-'))
+            if tc_id:
+                s, d = jreq('GET', '/api/testcases/%d' % tc_id, cookie=cookie)
+                check('R5 用例回读', d.get('tc', {}).get('status') == 'draft' and '正确账密登录' in d.get('steps_md', ''))
+                s, d = jreq('PATCH', '/api/testcases/%d' % tc_id,
+                            {'steps_md': '前置：无\n步骤：正确账密登录（改）\n预期：进入工作台', 'change_summary': '自检升版'}, cookie=cookie)
+                check('R5 编辑升版 v2', d.get('ok') and d.get('version') == 2)
+                s, d = jreq('PATCH', '/api/testcases/%d' % tc_id, {'op': 'status', 'status': 'approved'}, cookie=cookie)
+                s, d = jreq('PATCH', '/api/testcases/%d' % tc_id, {'steps_md': '批准后改动'}, cookie=cookie)
+                s, d = jreq('GET', '/api/testcases/%d' % tc_id, cookie=cookie)
+                check('R5 批准后编辑回草稿', d.get('tc', {}).get('status') == 'draft')
+                s, d = jreq('PUT', '/api/testcases/%d/execution' % tc_id,
+                            {'release_id': rel2, 'result': 'pass', 'conclusion': '自检执行',
+                             'dev_ref': '', 'ev_ref': 'EV-TEST'}, cookie=cookie)
+                check('R6 执行记录录入', d.get('ok'))
+                s, d = jreq('PUT', '/api/testcases/%d/execution' % tc_id,
+                            {'release_id': rel2, 'result': 'fail', 'conclusion': '复测改判',
+                             'dev_ref': 'DEV-1', 'ev_ref': ''}, cookie=cookie)
+                s, d = jreq('GET', '/api/releases/%d/executions' % rel2, cookie=cookie)
+                check('R6 按版本清单+upsert统计', d.get('ok') and len(d.get('items', [])) == 1
+                      and d['items'][0].get('result') == 'fail' and d.get('stat', {}).get('fail') == 1)
+                s, d = jreq('DELETE', '/api/testcases/%d' % tc_id, cookie=cookie)
+                check('R5 用例清理', d.get('ok'))
+            else:
+                for nm in ('R5 用例回读', 'R5 编辑升版 v2', 'R5 批准后编辑回草稿', 'R6 执行记录录入',
+                           'R6 按版本清单+upsert统计', 'R5 用例清理'):
+                    check(nm, False, 'tc_id 缺失')
+            if rel2:
+                s, d = jreq('DELETE', '/api/releases/%d' % rel2, cookie=cookie)
+            s2, _h, _b = http('GET', '/testcases.html', headers={'Cookie': cookie})
+            check('R5 用例页 200', s2 == 200)
         s, d = jreq('DELETE', '/api/projects/%d' % dpid, cookie=cookie)
         s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
         check('文档测试项目清理闭环', not any(p['id'] == dpid for p in d2.get('projects', [])))

@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用例库 - 需求池</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  .tc-row { display:flex; gap:8px; align-items:center; padding:8px 10px; border-bottom:1px solid #eee; cursor:pointer; flex-wrap:wrap }
+  .tc-row:hover { background:#f6f6fa }
+  .tc-code { font-family:monospace; color:#4f46e5; font-weight:600; min-width:74px }
+  .detail { display:none }
+  .detail.open { display:block }
+  textarea.mono { font-family:monospace; font-size:13px; width:100%; box-sizing:border-box; padding:8px }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <a class="btn small" href="/index.html">📁 需求列表</a>
+  <a class="btn primary small" href="/new.html">＋ 新需求</a>
+  <span style="flex:1"></span>
+  <a class="btn small" href="javascript:openPwdModal()">改密码</a>
+  <a class="btn small" href="javascript:logout()">退出</a>
+</div>
+<div class="wrap">
+  <div class="card" style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <strong>🧪 用例库</strong>
+    <select id="proj-sel" class="fld-row" style="padding:6px 8px"></select>
+    <span style="flex:1"></span>
+    <button class="btn primary small" id="btn-new-tc">＋ 新用例</button>
+  </div>
+  <div class="card" id="list"></div>
+
+  <div class="card detail" id="detail"></div>
+</div>
+
+<div class="modal-overlay" id="new-overlay" style="display:none">
+  <div class="modal card" style="width:min(560px,94vw);max-height:90vh;overflow:auto">
+    <h3>新建用例</h3>
+    <div class="fld-row"><label>项目</label><select id="n-proj" style="flex:1;padding:8px"></select></div>
+    <div class="fld-row"><label>标题</label><input id="n-title" style="flex:1;padding:8px" maxlength="200"></div>
+    <div class="fld-row"><label>关联需求</label><input id="n-req" style="flex:1;padding:8px" placeholder="需求编号（选填，如 184）"></div>
+    <div class="fld-row"><label>风险级</label><select id="n-risk" style="flex:1;padding:8px">
+      <option value="high">高</option><option value="middle" selected>中</option>
+      <option value="low">低</option><option value="external">外部依赖</option></select></div>
+    <div class="fld-row"><label>用例类型</label><select id="n-ctype" style="flex:1;padding:8px">
+      <option value="positive">正向</option><option value="negative">负向</option><option value="boundary">边界</option></select></div>
+    <label class="fld"><span>前置 / 步骤 / 预期（Markdown）</span><textarea id="n-steps" rows="6" class="mono"></textarea></label>
+    <div class="err" id="n-err" style="display:none"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button class="btn" onclick="closeNew()">取消</button>
+      <button class="btn primary" id="n-save">创建</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (r.status === 401) { location.href = '/login'; return {}; }
+  return r.json();
+}
+function logout() { fetch('/api/logout', { method: 'POST' }).then(() => location.href = '/login'); }
+function openPwdModal() { location.href = '/index.html'; }
+function $(id) { return document.getElementById(id); }
+function closeNew() { $('new-overlay').style.display = 'none'; $('n-err').style.display = 'none'; }
+
+const RN = { high: '高', middle: '中', low: '低', external: '外部依赖' };
+const CT = { positive: '正向', negative: '负向', boundary: '边界' };
+const TST = { draft: ['草稿', '#888', '#f2f2f2'], approved: ['已批准', '#15803d', '#dcfce7'] };
+const RES = { pass: ['通过', '#15803d', '#dcfce7'], fail: ['未通过', '#b91c1c', '#fee2e2'],
+              deviation: ['偏差', '#c2410c', '#ffedd5'], '': ['未执行', '#888', '#f2f2f2'] };
+
+async function init() {
+  const m = await api('/api/me'); me = m && m.user;
+  const b = await api('/api/bootstrap');
+  const projects = (b && b.projects) || [];
+  $('proj-sel').innerHTML = $('n-proj').innerHTML = projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  const want = new URLSearchParams(location.search).get('project');
+  if (want && projects.some(p => String(p.id) === want)) { $('proj-sel').value = want; $('n-proj').value = want; }
+  $('proj-sel').onchange = () => { closeDetail(); loadList(); };
+  $('btn-new-tc').onclick = () => { $('new-overlay').style.display = 'flex'; };
+  await loadList();
+}
+let me = null, releases = [];
+
+async function loadList() {
+  const pid = $('proj-sel').value;
+  if (!pid) return;
+  releases = (await api('/api/releases?project=' + pid)).items || [];
+  const r = await api('/api/testcases?project=' + pid);
+  const items = (r && r.items) || [];
+  $('list').innerHTML = `<div class="tc-row" style="font-weight:700;background:#f4f4f8">
+      <span class="tc-code">编号</span><span style="flex:1">标题</span>
+      <span>风险</span><span>类型</span><span>状态</span><span>关联需求</span></div>`
+    + (items.length ? items.map(x => `
+    <div class="tc-row" onclick="openTc(${x.id})">
+      <span class="tc-code">${esc(x.tc_code)}</span>
+      <span style="flex:1">${esc(x.title)}</span>
+      <span>${RN[x.risk] || x.risk}</span><span>${CT[x.ctype] || x.ctype}</span>
+      <span>${(TST[x.status] || TST.draft)[0]}</span>
+      <span class="sub" style="color:#888;font-size:12px">${x.related_req ? '#' + x.related_req : '—'}</span>
+    </div>`).join('') : '<div class="tc-row" style="color:#888">暂无用例，点右上角「＋ 新用例」创建</div>');
+}
+
+function closeDetail() { $('detail').classList.remove('open'); $('detail').innerHTML = ''; }
+
+async function openTc(id) {
+  const d = await api('/api/testcases/' + id);
+  if (!d || !d.ok) return;
+  const t = d.tc, ex = d.executions;
+  const el = $('detail');
+  el.classList.add('open');
+  el.innerHTML = `
+    <div class="proj-head" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <strong style="font-family:monospace;color:#4f46e5">${esc(t.tc_code)}</strong>
+      <strong style="flex:1">${esc(t.title)}</strong>
+      <span class="badge" style="color:${(TST[t.status]||TST.draft)[1]};background:${(TST[t.status]||TST.draft)[2]}">${(TST[t.status]||TST.draft)[0]}</span>
+      <button class="btn small" onclick="closeDetail()">✕ 收起</button>
+    </div>
+    <div class="sub" style="color:#888;font-size:12px;margin:6px 0">
+      风险 ${RN[t.risk]} ｜ ${CT[t.ctype]} ｜ v${t.current_version} ｜ 创建 ${esc(t.creator || '-')}
+      ${t.related_req ? ' ｜ 关联需求 <a href="javascript:void(0)" onclick="sessionStorage.tcBack=1;location.href=\'/index.html?project=' + t.project_id + '&req=' + t.related_req + '\'">#' + t.related_req + '</a>' : ''}
+      ${t.covers_urs ? ' ｜ URS：' + esc(t.covers_urs) : ''}
+    </div>
+    <div class="fld-row" id="tc-edit" style="display:none;flex-direction:column;gap:8px">
+      <input id="t-title" value="${esc(t.title)}" style="padding:8px" maxlength="200">
+      <div class="fld-row">
+        <label class="fld"><span>风险级</span><select id="t-risk">
+          ${['high','middle','low','external'].map(k => `<option value="${k}" ${t.risk===k?'selected':''}>${RN[k]}</option>`).join('')}</select></label>
+        <label class="fld"><span>类型</span><select id="t-ctype">
+          ${['positive','negative','boundary'].map(k => `<option value="${k}" ${t.ctype===k?'selected':''}>${CT[k]}</option>`).join('')}</select></label>
+        <label class="fld"><span>关联需求</span><input id="t-req" value="${t.related_req || ''}" style="width:100px;padding:8px"></label>
+      </div>
+      <textarea id="t-steps" rows="10" class="mono">${esc(d.steps_md)}</textarea>
+      <input id="t-summary" placeholder="修订摘要（选填）" style="padding:8px">
+      <div style="display:flex;gap:8px">
+        <button class="btn primary small" onclick="saveTc(${id})">保存为新版本</button>
+        <button class="btn small" onclick="closeDetail();loadList()">取消</button>
+      </div>
+    </div>
+    <div id="tc-view" style="margin-top:8px;white-space:pre-wrap;font-size:13px;line-height:1.6">${esc(d.steps_md) || '<span style="color:#aaa">（无步骤内容）</span>'}</div>
+    <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn small" onclick="toggleEdit()">✏️ 编辑</button>
+      ${t.status === 'draft' ? `<button class="btn primary small" onclick="approve(${id})">批准</button>`
+        : `<button class="btn small" onclick="unapprove(${id})">撤回草稿</button>`}
+      <button class="btn small danger" onclick="delTc(${id})">删除</button>
+    </div>
+    <h3 style="margin:14px 0 6px;font-size:15px">📋 执行记录</h3>
+    <div class="fld-row" style="flex-wrap:wrap;align-items:flex-end">
+      <label class="fld"><span>版本</span><select id="x-rel">${releases.map(r => `<option value="${r.id}">v${esc(r.version)}</option>`).join('') || '<option value="">（先创建版本）</option>'}</select></label>
+      <label class="fld"><span>结果</span><select id="x-result">
+        ${Object.entries(RES).map(([k, v]) => `<option value="${k}">${v[0]}</option>`).join('')}</select></label>
+      <label class="fld"><span>DEV号</span><input id="x-dev" style="width:110px;padding:8px"></label>
+      <label class="fld"><span>EV号</span><input id="x-ev" style="width:110px;padding:8px"></label>
+      <button class="btn primary small" onclick="saveExec(${id})">录入/更新</button>
+    </div>
+    <input id="x-conclusion" placeholder="结论备注（选填）" style="width:100%;padding:8px;margin-top:6px;box-sizing:border-box">
+    ${ex.length ? ex.map(e => `<div class="tc-row" style="cursor:default">
+      <span class="tc-code">v${esc(e.release_version)}</span>
+      <span class="badge" style="color:${(RES[e.result]||RES[''])[1]};background:${(RES[e.result]||RES[''])[2]}">${(RES[e.result]||RES[''])[0]}</span>
+      <span style="flex:1;font-size:13px">${esc(e.conclusion || '')}${e.dev_ref ? ' ｜ DEV:' + esc(e.dev_ref) : ''}${e.ev_ref ? ' ｜ EV:' + esc(e.ev_ref) : ''}</span>
+      <span class="sub" style="color:#888;font-size:12px">${esc(e.executor || '-')} ｜ ${esc((e.executed_at || '').slice(0, 10))}</span>
+    </div>`).join('') : '<div class="sub" style="color:#aaa;padding:6px 0">暂无执行记录</div>'}`;
+}
+function toggleEdit() {
+  const e = $('tc-edit'), v = $('tc-view');
+  const show = e.style.display === 'none';
+  e.style.display = show ? 'flex' : 'none'; v.style.display = show ? 'none' : '';
+}
+async function saveTc(id) {
+  const r = await api('/api/testcases/' + id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: $('t-title').value.trim(), steps_md: $('t-steps').value,
+      risk: $('t-risk').value, ctype: $('t-ctype').value, related_req: $('t-req').value || null,
+      change_summary: $('t-summary').value })
+  });
+  if (r.ok) openTc(id); else alert(r.error || '保存失败');
+}
+async function approve(id) {
+  await api('/api/testcases/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'status', status: 'approved' }) });
+  openTc(id);
+}
+async function unapprove(id) {
+  await api('/api/testcases/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'status', status: 'draft' }) });
+  openTc(id);
+}
+async function delTc(id) {
+  if (!confirm('确认删除该用例（含版本与执行记录）？')) return;
+  await api('/api/testcases/' + id, { method: 'DELETE' });
+  closeDetail(); loadList();
+}
+async function saveExec(id) {
+  if (!$('x-rel').value) { alert('请先在该项目创建版本'); return; }
+  const r = await api('/api/testcases/' + id + '/execution', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ release_id: +$('x-rel').value, result: $('x-result').value,
+      conclusion: $('x-conclusion').value, dev_ref: $('x-dev').value.trim(), ev_ref: $('x-ev').value.trim() })
+  });
+  if (r.ok) openTc(id); else alert(r.error || '录入失败');
+}
+$('n-save').onclick = async () => {
+  const title = $('n-title').value.trim();
+  if (!title) { $('n-err').textContent = '标题必填'; $('n-err').style.display = 'block'; return; }
+  const r = await api('/api/testcases', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: parseInt($('n-proj').value, 10), title,
+      steps_md: $('n-steps').value, risk: $('n-risk').value, ctype: $('n-ctype').value,
+      related_req: $('n-req').value || null })
+  });
+  if (r && r.ok) { closeNew(); $('proj-sel').value = $('n-proj').value; loadList(); }
+  else { $('n-err').textContent = (r && r.error) || '创建失败'; $('n-err').style.display = 'block'; }
+};
+init();
+</script>
+</body>
+</html>

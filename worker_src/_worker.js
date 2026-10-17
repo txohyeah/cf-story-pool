@@ -1029,6 +1029,179 @@ async function apiRelDelete(request, env, u, id) {
   return json({ ok: true });
 }
 
+// ---------- R5+R6 用例库 test_cases + 执行记录 tc_executions ----------
+const TC_RISKS = ['high', 'middle', 'low', 'external'];
+const TC_TYPES = ['positive', 'negative', 'boundary'];
+const TC_RESULTS = ['pass', 'fail', 'deviation'];
+
+async function nextTcCode(env, projectId) {
+  for (let i = 0; i < 5; i++) {
+    const row = (await env.DB.prepare(
+      `SELECT MAX(CAST(SUBSTR(tc_code, 4) AS INTEGER)) AS n FROM test_cases WHERE project_id = ?`)
+      .bind(projectId).first());
+    const n = (row && row.n ? row.n : 0) + 1;
+    const code = 'TC-' + String(n).padStart(3, '0');
+    const dup = (await env.DB.prepare('SELECT id FROM test_cases WHERE tc_code = ?').bind(code).first());
+    if (!dup) return code;
+  }
+  return 'TC-' + Date.now();
+}
+
+async function apiTcList(request, env) {
+  const url = new URL(request.url);
+  const pid = parseInt(url.searchParams.get('project'), 10);
+  if (!pid) return json({ error: '缺少 project' }, 400);
+  const where = ['t.project_id = ?']; const args = [pid];
+  const req = parseInt(url.searchParams.get('req'), 10);
+  if (req) { where.push('t.related_req = ?'); args.push(req); }
+  const status = url.searchParams.get('status');
+  if (status === 'draft' || status === 'approved') { where.push('t.status = ?'); args.push(status); }
+  const items = (await env.DB.prepare(
+    `SELECT t.*, u.display_name AS creator,
+            r.title AS related_req_title
+     FROM test_cases t
+     LEFT JOIN users u ON u.id = t.created_by
+     LEFT JOIN requirements r ON r.id = t.related_req
+     ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY t.tc_code ASC LIMIT 2000`).bind(...args).all()).results;
+  return json({ ok: true, items });
+}
+
+async function apiTcCreate(request, env, u) {
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const pid = parseInt(body.project_id, 10);
+  const title = String(body.title || '').trim().slice(0, 200);
+  if (!pid) return json({ error: '缺少项目' }, 400);
+  if (!title) return json({ error: '标题必填' }, 400);
+  const proj = await env.DB.prepare('SELECT id FROM projects WHERE id = ?').bind(pid).first();
+  if (!proj) return json({ error: '项目不存在' }, 404);
+  const tcCode = await nextTcCode(env, pid);
+  const now = nowIso();
+  const steps = String(body.steps_md || '').slice(0, 20000);
+  const related = body.related_req ? parseInt(body.related_req, 10) || null : null;
+  const r = await env.DB.prepare(
+    `INSERT INTO test_cases (project_id, tc_code, title, steps_md, related_req, covers_urs, risk, ctype, status, current_version, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?)`)
+    .bind(pid, tcCode, title, steps, related,
+          String(body.covers_urs || '').slice(0, 300),
+          TC_RISKS.includes(body.risk) ? body.risk : 'middle',
+          TC_TYPES.includes(body.ctype) ? body.ctype : 'positive', u.userId, now, now).run();
+  const tcId = r.meta.last_row_id;
+  await env.DB.prepare(
+    `INSERT INTO test_case_versions (tc_id, version, steps_md, change_summary, author_id, created_at)
+     VALUES (?, 1, ?, '首版', ?, ?)`).bind(tcId, steps, u.userId, now).run();
+  return json({ ok: true, id: tcId, tc_code: tcCode });
+}
+
+async function apiTcDetail(request, env, id) {
+  const t = (await env.DB.prepare(
+    `SELECT t.*, u.display_name AS creator, r.title AS related_req_title
+     FROM test_cases t
+     LEFT JOIN users u ON u.id = t.created_by
+     LEFT JOIN requirements r ON r.id = t.related_req
+     WHERE t.id = ?`).bind(id).first());
+  if (!t) return json({ error: '用例不存在' }, 404);
+  const cur = (await env.DB.prepare('SELECT steps_md FROM test_case_versions WHERE tc_id = ? AND version = ?')
+    .bind(id, t.current_version).first());
+  const versions = (await env.DB.prepare(
+    `SELECT v.version, v.change_summary, v.created_at, u.display_name AS author
+     FROM test_case_versions v LEFT JOIN users u ON u.id = v.author_id
+     WHERE v.tc_id = ? ORDER BY v.version DESC`).bind(id).all()).results;
+  const execs = (await env.DB.prepare(
+    `SELECT e.*, rl.version AS release_version, u.display_name AS executor
+     FROM tc_executions e
+     JOIN releases rl ON rl.id = e.release_id
+     LEFT JOIN users u ON u.id = e.executed_by
+     WHERE e.tc_id = ? ORDER BY e.executed_at DESC`).bind(id).all()).results;
+  return json({ ok: true, tc: t, steps_md: cur ? cur.steps_md : '', versions, executions: execs });
+}
+
+async function apiTcPatch(request, env, u, id) {
+  const t = (await env.DB.prepare('SELECT * FROM test_cases WHERE id = ?').bind(id).first());
+  if (!t) return json({ error: '用例不存在' }, 404);
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const now = nowIso();
+  if (body.op === 'status') {
+    const st = body.status;
+    if (st !== 'approved' && st !== 'draft') return json({ error: '非法状态' }, 400);
+    await env.DB.prepare('UPDATE test_cases SET status = ?, updated_at = ? WHERE id = ?').bind(st, now, id).run();
+    return json({ ok: true });
+  }
+  // edit：steps_md 变化 → 新版本快照；approved 用例编辑自动回 draft
+  const next = {
+    title: body.title !== undefined ? String(body.title).trim().slice(0, 200) : t.title,
+    steps_md: body.steps_md !== undefined ? String(body.steps_md).slice(0, 20000) : t.steps_md,
+    risk: TC_RISKS.includes(body.risk) ? body.risk : t.risk,
+    ctype: TC_TYPES.includes(body.ctype) ? body.ctype : t.ctype,
+    covers_urs: body.covers_urs !== undefined ? String(body.covers_urs).slice(0, 300) : t.covers_urs,
+    related_req: body.related_req !== undefined ? (body.related_req ? parseInt(body.related_req, 10) || null : null) : t.related_req
+  };
+  if (!next.title) return json({ error: '标题必填' }, 400);
+  const backToDraft = t.status === 'approved';
+  let newVer = t.current_version;
+  if (body.steps_md !== undefined && next.steps_md !== t.steps_md) {
+    newVer = t.current_version + 1;
+    await env.DB.prepare(
+      `INSERT INTO test_case_versions (tc_id, version, steps_md, change_summary, author_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`)
+      .bind(id, newVer, next.steps_md, String(body.change_summary || '').slice(0, 300), u.userId, now).run();
+  }
+  await env.DB.prepare(
+    `UPDATE test_cases SET title = ?, steps_md = ?, risk = ?, ctype = ?, covers_urs = ?, related_req = ?,
+     status = ?, current_version = ?, updated_at = ? WHERE id = ?`)
+    .bind(next.title, next.steps_md, next.risk, next.ctype, next.covers_urs, next.related_req,
+          backToDraft ? 'draft' : t.status, newVer, now, id).run();
+  return json({ ok: true, version: newVer, status: backToDraft ? 'draft' : t.status });
+}
+
+async function apiTcDelete(request, env, u, id) {
+  const stmts = [
+    env.DB.prepare('DELETE FROM tc_executions WHERE tc_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM test_case_versions WHERE tc_id = ?').bind(id),
+    env.DB.prepare('DELETE FROM test_cases WHERE id = ?').bind(id)
+  ];
+  await env.DB.batch(stmts);
+  return json({ ok: true });
+}
+
+async function apiTcExecPut(request, env, u, id) {
+  const t = (await env.DB.prepare('SELECT id FROM test_cases WHERE id = ?').bind(id).first());
+  if (!t) return json({ error: '用例不存在' }, 404);
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const rid = parseInt(body.release_id, 10);
+  if (!rid) return json({ error: '缺少 release_id' }, 400);
+  const rl = (await env.DB.prepare('SELECT id FROM releases WHERE id = ?').bind(rid).first());
+  if (!rl) return json({ error: '版本不存在' }, 404);
+  const result = TC_RESULTS.includes(body.result) ? body.result : '';
+  const conclusion = String(body.conclusion || '').slice(0, 2000);
+  const devRef = String(body.dev_ref || '').trim().slice(0, 60);
+  const evRef = String(body.ev_ref || '').trim().slice(0, 60);
+  await env.DB.prepare(
+    `INSERT INTO tc_executions (tc_id, release_id, result, conclusion, dev_ref, ev_ref, executed_by, executed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (tc_id, release_id) DO UPDATE SET result = excluded.result, conclusion = excluded.conclusion,
+       dev_ref = excluded.dev_ref, ev_ref = excluded.ev_ref, executed_by = excluded.executed_by,
+       executed_at = excluded.executed_at`)
+    .bind(id, rid, result, conclusion, devRef, evRef, u.userId, nowIso()).run();
+  return json({ ok: true });
+}
+
+async function apiTcExecList(request, env, id) {
+  const rl = (await env.DB.prepare('SELECT id, version FROM releases WHERE id = ?').bind(id).first());
+  if (!rl) return json({ error: '版本不存在' }, 404);
+  const items = (await env.DB.prepare(
+    `SELECT e.*, t.tc_code, t.title AS tc_title, t.status AS tc_status, u.display_name AS executor
+     FROM tc_executions e
+     JOIN test_cases t ON t.id = e.tc_id
+     LEFT JOIN users u ON u.id = e.executed_by
+     WHERE e.release_id = ? ORDER BY t.tc_code ASC`).bind(id).all()).results;
+  const stat = { pass: 0, fail: 0, deviation: 0, empty: 0 };
+  for (const e of items) stat[e.result || 'empty'] = (stat[e.result || 'empty'] || 0) + 1;
+  return json({ ok: true, release: { id: rl.id, version: rl.version }, items, stat });
+}
+
 // ---------- 去重提示（LIKE 子串） ----------
 async function apiDedup(request, env) {
   const url = new URL(request.url);
@@ -1078,6 +1251,19 @@ export default {
         if (method === 'PATCH') return apiRelPatch(request, env, u, id);
         if (method === 'DELETE') return apiRelDelete(request, env, u, id);
       }
+      const rlmx = p.match(/^\/api\/releases\/(\d+)\/executions$/);
+      if (rlmx && method === 'GET') return apiTcExecList(request, env, parseInt(rlmx[1], 10));
+      if (p === '/api/testcases' && method === 'GET') return apiTcList(request, env);
+      if (p === '/api/testcases' && method === 'POST') return apiTcCreate(request, env, u);
+      const tcm = p.match(/^\/api\/testcases\/(\d+)$/);
+      if (tcm) {
+        const id = parseInt(tcm[1], 10);
+        if (method === 'GET') return apiTcDetail(request, env, id);
+        if (method === 'PATCH') return apiTcPatch(request, env, u, id);
+        if (method === 'DELETE') return apiTcDelete(request, env, u, id);
+      }
+      const tcem = p.match(/^\/api\/testcases\/(\d+)\/execution$/);
+      if (tcem && method === 'PUT') return apiTcExecPut(request, env, u, parseInt(tcem[1], 10));
       if (p === '/api/docs' && method === 'GET') return apiDocList(request, env);
       if (p === '/api/docs' && method === 'POST') return apiDocCreate(request, env, u);
       const dm = p.match(/^\/api\/docs\/(\d+)$/);
