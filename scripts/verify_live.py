@@ -368,12 +368,19 @@ def main():
             check('测试文档清理', d.get('ok'))
         # ---- R3/R2：单据字段增强 + 筛选导出 ----
         if dpid:
-            s, d = jreq('POST', '/api/upload', files={'file': ('r.png', make_png(), 'image/png')}, cookie=cookie)
-            up_key = d.get('key') if isinstance(d, dict) and d.get('ok') else None
+            png3 = make_png()
+            bnd3 = '----r3%s' % os.urandom(8).hex()
+            part3 = (('--%s\r\nContent-Disposition: form-data; name="file"; filename="r.png"\r\n'
+                      'Content-Type: image/png\r\n\r\n' % bnd3).encode()
+                     + png3 + ('\r\n--%s--\r\n' % bnd3).encode())
+            s, _h, raw3 = http('POST', '/api/upload', part3,
+                               {'Content-Type': 'multipart/form-data; boundary=%s' % bnd3, 'Cookie': cookie})
+            up3 = _json.loads(raw3) if raw3 else {}
+            up_key = up3.get('key') if up3.get('ok') else None
             body_r3 = {'project_id': dpid, 'title': '[verify] Bug探针', 'type': 'bug',
                        'severity': 'major', 'root_cause': 'defect', 'ref_code': 'ISS-2099-001',
                        'description': 'R3验证'}
-            if up_key: body_r3['attachments'] = [{'key': up_key, 'name': 'r.png', 'size': len(make_png())}]
+            if up_key: body_r3['attachments'] = [{'key': up_key, 'name': 'r.png', 'size': len(png3)}]
             s, d = jreq('POST', '/api/requirements', body_r3, cookie=cookie)
             bid = d.get('id')
             if not bid:
