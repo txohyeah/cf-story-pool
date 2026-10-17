@@ -6,7 +6,9 @@
 <title>文档 - 需求池</title>
 <link rel="stylesheet" href="/style.css">
 <style>
-  .md-body { line-height: 1.75; overflow-x: auto; }
+  .doc-layout { display: flex; gap: 14px; align-items: flex-start; }
+  @media (max-width: 900px) { .doc-layout { flex-direction: column; } .doc-layout > div { width: 100% !important; } }
+  .md-body { line-height: 1.75; overflow-x: auto; max-width: 980px; }
   .md-body table { border-collapse: collapse; margin: 10px 0; display: block; overflow-x: auto; max-width: 100%; }
   .md-body th, .md-body td { border: 1px solid #d8d8e0; padding: 6px 10px; font-size: 13px; }
   .md-body th { background: #f4f4f8; }
@@ -29,7 +31,7 @@
   <button class="btn primary small" id="btn-edit">✏️ 编辑</button>
   <button class="btn small" id="btn-status"></button>
 </div>
-<div class="wrap list-layout">
+<div class="wrap doc-layout">
   <div class="card" style="flex:1;min-width:0">
     <div id="hist-banner" style="display:none;background:#fef3c7;color:#92400e;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:13px"></div>
     <h2 id="d-title" style="margin:0 0 6px"></h2>
@@ -79,7 +81,11 @@ async function api(path, opts) {
 }
 function logout() { fetch('/api/logout', { method: 'POST' }).then(() => location.href = '/login'); }
 function $(id) { return document.getElementById(id); }
-function mdRender(s) { return DOMPurify.sanitize(marked.parse(s || '')); }
+function mdRender(s) {
+  // 剥离首行 h1（与页面标题重复）；表格套横向滚动容器防撑破
+  const body = String(s || '').replace(/^\s*#\s+[^\n]*\n/, '');
+  return DOMPurify.sanitize(marked.parse(body));
+}
 
 const ST = { draft: ['草稿', '#888', '#f2f2f2'], review: ['评审中', '#b45309', '#fef3c7'], approved: ['已批准', '#15803d', '#dcfce7'] };
 function stBadge(s) { const [t, fg, bg] = ST[s] || ST.draft; return `<span class="badge" style="color:${fg};background:${bg}">${t}</span>`; }
