@@ -559,7 +559,10 @@ async function apiReqPatch(request, env, u, id) {
       related_codes: body.related_codes !== undefined
         ? JSON.stringify((Array.isArray(body.related_codes) ? body.related_codes : [])
             .map(x => String(x).trim().slice(0, 60)).filter(Boolean).slice(0, 20))
-        : (r.related_codes || '[]')
+        : (r.related_codes || '[]'),
+      release_id: body.release_id !== undefined
+        ? (body.release_id ? (parseInt(body.release_id, 10) || null) : null)
+        : r.release_id
     };
     if (body.project_id !== undefined) {
       const pid = parseInt(body.project_id, 10);
@@ -572,10 +575,10 @@ async function apiReqPatch(request, env, u, id) {
     if (!next.title) return json({ error: '标题不能为空' }, 400);
     await env.DB.prepare(
       `UPDATE requirements SET title = ?, description = ?, type = ?, urgency = ?, project_id = ?, updated_at = ?,
-       severity = ?, root_cause = ?, ref_code = ?, related_codes = ?
+       severity = ?, root_cause = ?, ref_code = ?, related_codes = ?, release_id = ?
        WHERE id = ?`)
       .bind(next.title, next.description, next.type, next.urgency, next.project_id, nowIso(),
-            next.severity, next.root_cause, next.ref_code, next.related_codes, id).run();
+            next.severity, next.root_cause, next.ref_code, next.related_codes, next.release_id, id).run();
     await env.DB.prepare(
       `INSERT INTO events (req_id, actor_id, action, detail) VALUES (?, ?, 'edit', '')`)
       .bind(id, u.userId).run();
@@ -953,6 +956,79 @@ async function apiExport(request, env, u) {
   return new Response(csv, { status: 200, headers: h });
 }
 
+// ---------- R4 releases 版本发布单（CR-V 承载；发布确认人≠实施人） ----------
+const RELEASE_STATUSES = ['planning', 'testing', 'reverify', 'published', 'closed'];
+
+async function apiRelList(request, env) {
+  const url = new URL(request.url);
+  const pid = parseInt(url.searchParams.get('project'), 10);
+  if (!pid) return json({ error: '缺少 project' }, 400);
+  const items = (await env.DB.prepare(
+    `SELECT rl.*, u.display_name AS creator,
+            (SELECT COUNT(*) FROM requirements r WHERE r.release_id = rl.id) AS bug_count
+     FROM releases rl LEFT JOIN users u ON u.id = rl.created_by
+     WHERE rl.project_id = ? ORDER BY rl.id DESC`).bind(pid).all()).results;
+  return json({ ok: true, items });
+}
+
+async function apiRelCreate(request, env, u) {
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const pid = parseInt(body.project_id, 10);
+  const version = String(body.version || '').trim().slice(0, 60);
+  if (!pid) return json({ error: '缺少项目' }, 400);
+  if (!version) return json({ error: '版本号必填' }, 400);
+  const proj = await env.DB.prepare('SELECT id FROM projects WHERE id = ?').bind(pid).first();
+  if (!proj) return json({ error: '项目不存在' }, 404);
+  const now = nowIso();
+  const r = await env.DB.prepare(
+    `INSERT INTO releases (project_id, version, change_scope, retest_scope, status, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 'planning', ?, ?, ?)`)
+    .bind(pid, version, String(body.change_scope || '').slice(0, 2000),
+          String(body.retest_scope || '').slice(0, 2000), u.userId, now, now).run();
+  return json({ ok: true, id: r.meta.last_row_id });
+}
+
+async function apiRelPatch(request, env, u, id) {
+  const rl = (await env.DB.prepare('SELECT * FROM releases WHERE id = ?').bind(id).first());
+  if (!rl) return json({ error: '版本不存在' }, 404);
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const now = nowIso();
+  const op = body.op || 'edit';
+  if (op === 'status') {
+    const to = body.status;
+    if (!RELEASE_STATUSES.includes(to)) return json({ error: '非法状态' }, 400);
+    if (to === 'published') {
+      // 发布确认：确认人≠实施人（创建人），确认动作即发布
+      if (u.userId === rl.created_by) return json({ error: '发布确认人不能是实施人（创建人）本人' }, 400);
+      await env.DB.prepare(
+        `UPDATE releases SET status = 'published', published_by = ?, published_at = ?, confirmor_id = ?, confirmor_at = ?, updated_at = ? WHERE id = ?`)
+        .bind(u.userId, now, u.userId, now, now, id).run();
+    } else {
+      await env.DB.prepare('UPDATE releases SET status = ?, updated_at = ? WHERE id = ?').bind(to, now, id).run();
+    }
+    return json({ ok: true });
+  }
+  // edit：版本信息与关联 bug（release_id 挂需求单上）
+  const next = {
+    version: body.version !== undefined ? String(body.version).trim().slice(0, 60) : rl.version,
+    change_scope: body.change_scope !== undefined ? String(body.change_scope).slice(0, 2000) : rl.change_scope,
+    retest_scope: body.retest_scope !== undefined ? String(body.retest_scope).slice(0, 2000) : rl.retest_scope
+  };
+  if (!next.version) return json({ error: '版本号必填' }, 400);
+  await env.DB.prepare('UPDATE releases SET version = ?, change_scope = ?, retest_scope = ?, updated_at = ? WHERE id = ?')
+    .bind(next.version, next.change_scope, next.retest_scope, now, id).run();
+  return json({ ok: true });
+}
+
+async function apiRelDelete(request, env, u, id) {
+  await env.DB.prepare('UPDATE requirements SET release_id = NULL WHERE release_id = ?').bind(id).run();
+  const r = await env.DB.prepare('DELETE FROM releases WHERE id = ?').bind(id).run();
+  if (!r.meta.changes) return json({ error: '版本不存在' }, 404);
+  return json({ ok: true });
+}
+
 // ---------- 去重提示（LIKE 子串） ----------
 async function apiDedup(request, env) {
   const url = new URL(request.url);
@@ -994,6 +1070,14 @@ export default {
       if (p === '/api/my-work') return apiMyWork(request, env, u);
       if (p === '/api/dedup-suggest') return apiDedup(request, env);
       if (p === '/api/export' && method === 'GET') return apiExport(request, env, u);
+      if (p === '/api/releases' && method === 'GET') return apiRelList(request, env);
+      if (p === '/api/releases' && method === 'POST') return apiRelCreate(request, env, u);
+      const rlm = p.match(/^\/api\/releases\/(\d+)$/);
+      if (rlm) {
+        const id = parseInt(rlm[1], 10);
+        if (method === 'PATCH') return apiRelPatch(request, env, u, id);
+        if (method === 'DELETE') return apiRelDelete(request, env, u, id);
+      }
       if (p === '/api/docs' && method === 'GET') return apiDocList(request, env);
       if (p === '/api/docs' && method === 'POST') return apiDocCreate(request, env, u);
       const dm = p.match(/^\/api\/docs\/(\d+)$/);

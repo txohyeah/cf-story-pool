@@ -396,6 +396,34 @@ def main():
                       and '[verify] Bug探针' in txt and '验收标准汇总' in txt and '== 统计汇总 ==' in txt)
                 s, d = jreq('DELETE', '/api/requirements/%d' % bid, cookie=cookie)
                 check('R3 探针清理', d.get('ok'))
+            # ---- R4：releases 版本发布单 ----
+            s, d = jreq('POST', '/api/releases', {'project_id': dpid, 'version': 'v0.0-verify',
+                'change_scope': '[verify] 变更范围', 'retest_scope': '[verify] 再验证范围'}, cookie=cookie)
+            rel_id = d.get('id')
+            check('R4 版本创建', bool(rel_id))
+            if rel_id:
+                s, d = jreq('POST', '/api/requirements', {
+                    'project_id': dpid, 'title': '[verify] R4关联探针', 'type': 'bug'}, cookie=cookie)
+                rb = d.get('id')
+                if rb:
+                    s, d = jreq('PATCH', '/api/requirements/%d' % rb, {'op': 'edit', 'release_id': rel_id}, cookie=cookie)
+                    s, d = jreq('GET', '/api/releases?project=%d' % dpid, cookie=cookie)
+                    hit = [x for x in d.get('items', []) if x['id'] == rel_id]
+                    check('R4 bug关联+计数', hit and hit[0].get('bug_count') == 1)
+                    s, d = jreq('PATCH', '/api/releases/%d' % rel_id, {'op': 'status', 'status': 'published'}, cookie=cookie)
+                    check('R4 发布确认人≠实施人拦截', s == 400)
+                    s, d = jreq('DELETE', '/api/requirements/%d' % rb, cookie=cookie)
+                else:
+                    check('R4 bug关联+计数', False, '关联探针缺失')
+                    check('R4 发布确认人≠实施人拦截', False, '关联探针缺失')
+                s, d = jreq('DELETE', '/api/releases/%d' % rel_id, cookie=cookie)
+                check('R4 版本清理', d.get('ok'))
+            else:
+                check('R4 bug关联+计数', False, 'rel_id 缺失')
+                check('R4 发布确认人≠实施人拦截', False, 'rel_id 缺失')
+                check('R4 版本清理', False, 'rel_id 缺失')
+            s2, _h, _b = http('GET', '/releases.html', headers={'Cookie': cookie})
+            check('R4 版本页 200', s2 == 200)
         s, d = jreq('DELETE', '/api/projects/%d' % dpid, cookie=cookie)
         s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
         check('文档测试项目清理闭环', not any(p['id'] == dpid for p in d2.get('projects', [])))

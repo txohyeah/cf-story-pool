@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>版本发布 - 需求池</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="topbar">
+  <a class="btn small" href="/index.html">📁 需求列表</a>
+  <a class="btn primary small" href="/new.html">＋ 新需求</a>
+  <span style="flex:1"></span>
+  <a class="btn small" href="javascript:openPwdModal()">改密码</a>
+  <a class="btn small" href="javascript:logout()">退出</a>
+</div>
+<div class="wrap">
+  <div class="card" style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <strong>🚀 版本发布</strong>
+    <select id="proj-sel" class="fld-row" style="padding:6px 8px"></select>
+    <span style="flex:1"></span>
+    <button class="btn primary small" id="btn-new-rel">＋ 新版本</button>
+  </div>
+  <div id="list"></div>
+  <div id="empty" class="card" style="display:none;text-align:center;color:#888">本项目暂无版本，点右上角「＋ 新版本」创建</div>
+</div>
+
+<div class="modal-overlay" id="new-overlay" style="display:none">
+  <div class="modal card" style="width:min(520px,92vw)">
+    <h3>新建版本</h3>
+    <div class="fld-row"><label>所属项目</label><select id="n-proj" style="flex:1;padding:8px"></select></div>
+    <div class="fld-row"><label>版本号</label><input id="n-version" style="flex:1;padding:8px" maxlength="60" placeholder="如 v1.6.0"></div>
+    <div class="fld-row"><label>变更范围</label><textarea id="n-scope" rows="3" style="flex:1;padding:8px" placeholder="本版包含的功能/修复（选填）"></textarea></div>
+    <div class="fld-row"><label>再验证范围</label><textarea id="n-retest" rows="3" style="flex:1;padding:8px" placeholder="回归范围（选填）"></textarea></div>
+    <div class="err" id="n-err" style="display:none"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button class="btn" onclick="closeNew()">取消</button>
+      <button class="btn primary" id="n-save">创建</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (r.status === 401) { location.href = '/login'; return {}; }
+  return r.json();
+}
+function logout() { fetch('/api/logout', { method: 'POST' }).then(() => location.href = '/login'); }
+function openPwdModal() { location.href = '/index.html'; }
+function $(id) { return document.getElementById(id); }
+function closeNew() { $('new-overlay').style.display = 'none'; $('n-err').style.display = 'none'; }
+
+const RST = { planning: ['规划中', '#4f46e5', '#eef2ff'], testing: ['测试中', '#b45309', '#fef3c7'],
+              reverify: ['待再验证', '#9333ea', '#f3e8ff'], published: ['已发布', '#15803d', '#dcfce7'],
+              closed: ['已关闭', '#6b7280', '#f3f4f6'] };
+function stBadge(s) { const [t, fg, bg] = RST[s] || RST.planning; return `<span class="badge" style="color:${fg};background:${bg}">${t}</span>`; }
+
+let me = null;
+async function init() {
+  const m = await api('/api/me'); me = m && m.user;
+  const b = await api('/api/bootstrap');
+  const projects = (b && b.projects) || [];
+  const sel = $('proj-sel'), nsel = $('n-proj');
+  sel.innerHTML = nsel.innerHTML = projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  const want = new URLSearchParams(location.search).get('project');
+  if (want && projects.some(p => String(p.id) === want)) { sel.value = want; nsel.value = want; }
+  sel.onchange = () => { location.href = '/releases.html?project=' + sel.value; };
+  $('btn-new-rel').onclick = () => { $('new-overlay').style.display = 'flex'; };
+  await loadList();
+}
+async function loadList() {
+  const pid = $('proj-sel').value;
+  if (!pid) return;
+  const r = await api('/api/releases?project=' + pid);
+  const items = (r && r.items) || [];
+  $('empty').style.display = items.length ? 'none' : 'block';
+  $('list').innerHTML = items.map(x => {
+    const canConfirm = x.status !== 'published' && x.status !== 'closed' && me && x.created_by !== me.userId;
+    return `<div class="proj-card">
+      <div class="proj-head">
+        <strong>${esc(x.version)}</strong>
+        ${stBadge(x.status)}
+        <span class="sub" style="color:#888;font-size:12px">🐛 ${x.bug_count} 个关联单</span>
+      </div>
+      <div class="sub" style="color:#666;font-size:13px;margin-top:4px">${x.change_scope ? '变更：' + esc(x.change_scope) : ''}${x.retest_scope ? '<br>再验证：' + esc(x.retest_scope) : ''}</div>
+      <div class="sub" style="color:#888;font-size:12px;margin-top:4px">创建 ${esc(x.creator || '-')} ｜ ${esc((x.created_at || '').slice(0, 10))}${x.confirmor_at ? ' ｜ 发布确认 ' + esc((x.confirmor_at || '').slice(0, 10)) : ''}</div>
+      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn small" onclick="linkBug(${x.id})">🔗 关联 bug</button>
+        ${x.status === 'planning' ? `<button class="btn small" onclick="setStatus(${x.id},'testing')">进入测试</button>` : ''}
+        ${x.status === 'testing' ? `<button class="btn small" onclick="setStatus(${x.id},'reverify')">转待再验证</button>` : ''}
+        ${canConfirm ? `<button class="btn primary small" onclick="setStatus(${x.id},'published')">发布确认</button>` : ''}
+        ${x.status === 'published' ? `<button class="btn small" onclick="setStatus(${x.id},'closed')">关闭</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+async function setStatus(id, st) {
+  if (st === 'published' && !confirm('确认发布该版本？（发布确认人将记录为您，且不能与实施人相同）')) return;
+  const r = await api('/api/releases/' + id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'status', status: st })
+  });
+  if (!r.ok) alert(r.error || '操作失败');
+  loadList();
+}
+async function linkBug(relId) {
+  const raw = prompt('输入要关联到该版本的 bug 编号（纯数字，如 104）：');
+  if (!raw) return;
+  const bid = parseInt(raw.replace(/[^0-9]/g, ''), 10);
+  if (!bid) { alert('编号无效'); return; }
+  const chk = await api('/api/requirements/' + bid);
+  if (!chk.ok) { alert('需求不存在'); return; }
+  const r = await api('/api/requirements/' + bid, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'edit', release_id: relId })
+  });
+  if (r.ok) loadList(); else alert(r.error || '关联失败');
+}
+$('n-save').onclick = async () => {
+  const version = $('n-version').value.trim();
+  if (!version) { $('n-err').textContent = '版本号必填'; $('n-err').style.display = 'block'; return; }
+  const r = await api('/api/releases', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: parseInt($('n-proj').value, 10), version,
+      change_scope: $('n-scope').value, retest_scope: $('n-retest').value })
+  });
+  if (r && r.ok) { closeNew(); loadList(); }
+  else { $('n-err').textContent = (r && r.error) || '创建失败'; $('n-err').style.display = 'block'; }
+};
+init();
+</script>
+</body>
+</html>
