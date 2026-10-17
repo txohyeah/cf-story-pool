@@ -392,7 +392,7 @@ def main():
                 check('R3 ref_code精确查询', any(x['id'] == bid for x in d.get('items', [])))
                 s2, _h, raw = http('GET', '/api/export?project=%d' % dpid, headers={'Cookie': cookie})
                 txt = raw.decode('utf-8-sig', errors='replace')
-                check('R2 导出CSV（BOM+探针+表头+统计）', s2 == 200 and txt.startswith('\ufeff')
+                check('R2 导出CSV（BOM+探针+表头+统计）', s2 == 200 and raw.startswith(b'\xef\xbb\xbf')
                       and '[verify] Bug探针' in txt and '验收标准汇总' in txt and '== 统计汇总 ==' in txt)
                 s, d = jreq('DELETE', '/api/requirements/%d' % bid, cookie=cookie)
                 check('R3 探针清理', d.get('ok'))
