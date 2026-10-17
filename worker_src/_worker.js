@@ -710,6 +710,143 @@ async function apiFileGet(request, env, token) {
   return new Response(d, { status: 200, headers: h });
 }
 
+// ---------- 文档页（v2 P0：项目内 md 文档 + 版本快照 + 评审） ----------
+async function apiDocList(request, env) {
+  const url = new URL(request.url);
+  const pid = url.searchParams.get('project_id');
+  if (!pid) return json({ error: '缺少 project_id' }, 400);
+  const items = (await env.DB.prepare(
+    `SELECT d.id, d.title, d.status, d.current_version, d.updated_at,
+            u.display_name AS author, p.name AS project_name,
+            (SELECT COUNT(*) FROM doc_comments c WHERE c.doc_id = d.id) AS comment_count
+     FROM docs d JOIN users u ON u.id = d.created_by JOIN projects p ON p.id = d.project_id
+     WHERE d.project_id = ?
+     ORDER BY d.updated_at DESC`).bind(parseInt(pid, 10)).all()).results;
+  return json({ ok: true, items });
+}
+
+async function apiDocCreate(request, env, u) {
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const pid = parseInt(body.project_id, 10);
+  const title = String(body.title || '').trim().slice(0, 200);
+  const content = String(body.content_md || '');
+  if (!pid) return json({ error: '缺少项目' }, 400);
+  if (!title) return json({ error: '标题不能为空' }, 400);
+  if (content.length > 200000) return json({ error: '文档内容过大（>200KB）' }, 400);
+  const proj = await env.DB.prepare('SELECT id FROM projects WHERE id = ?').bind(pid).first();
+  if (!proj) return json({ error: '项目不存在' }, 404);
+  const now = nowIso();
+  const r = await env.DB.prepare(
+    `INSERT INTO docs (project_id, title, current_version, status, created_by, created_at, updated_at)
+     VALUES (?, ?, 1, 'draft', ?, ?, ?)`).bind(pid, title, u.userId, now, now).run();
+  const docId = r.meta.last_row_id;
+  await env.DB.prepare(
+    `INSERT INTO doc_versions (doc_id, version, content_md, change_summary, author_id, created_at)
+     VALUES (?, 1, ?, '首版', ?, ?)`).bind(docId, content, u.userId, now).run();
+  return json({ ok: true, id: docId });
+}
+
+async function apiDocDetail(request, env, u, id) {
+  const d = (await env.DB.prepare(
+    `SELECT d.*, u.display_name AS author, p.name AS project_name
+     FROM docs d JOIN users u ON u.id = d.created_by JOIN projects p ON p.id = d.project_id
+     WHERE d.id = ?`).bind(id).first());
+  if (!d) return json({ error: '文档不存在' }, 404);
+  const cur = (await env.DB.prepare(
+    'SELECT content_md FROM doc_versions WHERE doc_id = ? AND version = ?')
+    .bind(id, d.current_version).first());
+  const versions = (await env.DB.prepare(
+    `SELECT v.version, v.change_summary, v.created_at, u.display_name AS author
+     FROM doc_versions v LEFT JOIN users u ON u.id = v.author_id
+     WHERE v.doc_id = ? ORDER BY v.version DESC`).bind(id).all()).results;
+  const comments = (await env.DB.prepare(
+    `SELECT c.id, c.doc_version, c.content, c.created_at, u.display_name AS user
+     FROM doc_comments c JOIN users u ON u.id = c.user_id
+     WHERE c.doc_id = ? ORDER BY c.created_at ASC`).bind(id).all()).results;
+  return json({ ok: true, doc: d, content_md: cur ? cur.content_md : '', versions, comments });
+}
+
+async function apiDocPatch(request, env, u, id) {
+  const d = (await env.DB.prepare('SELECT * FROM docs WHERE id = ?').bind(id).first());
+  if (!d) return json({ error: '文档不存在' }, 404);
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const now = nowIso();
+
+  // 仅状态流转（不携带内容）
+  if (body.status && body.content_md === undefined) {
+    const st = String(body.status);
+    if (!['draft', 'review', 'approved'].includes(st)) return json({ error: '非法状态' }, 400);
+    if (st === 'approved') {
+      await env.DB.prepare('UPDATE docs SET status = ?, approved_by = ?, approved_at = ?, updated_at = ? WHERE id = ?')
+        .bind(st, u.userId, now, now, id).run();
+    } else {
+      await env.DB.prepare('UPDATE docs SET status = ?, updated_at = ? WHERE id = ?').bind(st, now, id).run();
+    }
+    return json({ ok: true });
+  }
+
+  // 内容编辑 → 新版本快照；已批准文档再编辑自动回草稿（批准记录随历史版本保留）
+  if (body.content_md !== undefined) {
+    const content = String(body.content_md);
+    if (content.length > 200000) return json({ error: '文档内容过大（>200KB）' }, 400);
+    const title = body.title !== undefined ? String(body.title).trim().slice(0, 200) : d.title;
+    if (!title) return json({ error: '标题不能为空' }, 400);
+    const newVer = d.current_version + 1;
+    const summary = String(body.change_summary || '').trim().slice(0, 300);
+    const backToDraft = d.status === 'approved';
+    await env.DB.prepare(
+      `INSERT INTO doc_versions (doc_id, version, content_md, change_summary, author_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`).bind(id, newVer, content, summary, u.userId, now).run();
+    await env.DB.prepare(
+      'UPDATE docs SET title = ?, current_version = ?, status = ?, approved_by = NULL, approved_at = NULL, updated_at = ? WHERE id = ?')
+      .bind(title, newVer, backToDraft ? 'draft' : d.status, now, id).run();
+    return json({ ok: true, version: newVer, status: backToDraft ? 'draft' : d.status });
+  }
+
+  // 仅改标题
+  if (body.title !== undefined) {
+    const title = String(body.title).trim().slice(0, 200);
+    if (!title) return json({ error: '标题不能为空' }, 400);
+    await env.DB.prepare('UPDATE docs SET title = ?, updated_at = ? WHERE id = ?').bind(title, now, id).run();
+    return json({ ok: true });
+  }
+  return json({ error: '无可更新内容' }, 400);
+}
+
+async function apiDocVersion(request, env, id, v) {
+  const row = (await env.DB.prepare(
+    `SELECT v.content_md, v.created_at, u.display_name AS author
+     FROM doc_versions v LEFT JOIN users u ON u.id = v.author_id
+     WHERE v.doc_id = ? AND v.version = ?`).bind(id, v).first());
+  if (!row) return json({ error: '版本不存在' }, 404);
+  return json({ ok: true, version: v, content_md: row.content_md, created_at: row.created_at, author: row.author });
+}
+
+async function apiDocComment(request, env, u, id) {
+  const d = (await env.DB.prepare('SELECT id, current_version FROM docs WHERE id = ?').bind(id).first());
+  if (!d) return json({ error: '文档不存在' }, 404);
+  let body = {};
+  try { body = await request.json(); } catch (e) {}
+  const text = String(body.content || '').trim().slice(0, 2000);
+  if (!text) return json({ error: '评论不能为空' }, 400);
+  const ver = body.version ? parseInt(body.version, 10) : d.current_version;
+  await env.DB.prepare(
+    'INSERT INTO doc_comments (doc_id, doc_version, user_id, content) VALUES (?, ?, ?, ?)')
+    .bind(id, ver, u.userId, text).run();
+  await env.DB.prepare('UPDATE docs SET updated_at = ? WHERE id = ?').bind(nowIso(), id).run();
+  return json({ ok: true });
+}
+
+async function apiDocDelete(request, env, u, id) {
+  await env.DB.prepare('DELETE FROM doc_comments WHERE doc_id = ?').bind(id).run();
+  await env.DB.prepare('DELETE FROM doc_versions WHERE doc_id = ?').bind(id).run();
+  const r = await env.DB.prepare('DELETE FROM docs WHERE id = ?').bind(id).run();
+  if (!r.meta.changes) return json({ error: '文档不存在' }, 404);
+  return json({ ok: true });
+}
+
 // ---------- 去重提示（LIKE 子串） ----------
 async function apiDedup(request, env) {
   const url = new URL(request.url);
@@ -750,6 +887,19 @@ export default {
       if (p === '/api/tags' && method === 'GET') return apiTagList(request, env);
       if (p === '/api/my-work') return apiMyWork(request, env, u);
       if (p === '/api/dedup-suggest') return apiDedup(request, env);
+      if (p === '/api/docs' && method === 'GET') return apiDocList(request, env);
+      if (p === '/api/docs' && method === 'POST') return apiDocCreate(request, env, u);
+      const dm = p.match(/^\/api\/docs\/(\d+)$/);
+      if (dm) {
+        const id = parseInt(dm[1], 10);
+        if (method === 'GET') return apiDocDetail(request, env, u, id);
+        if (method === 'PATCH') return apiDocPatch(request, env, u, id);
+        if (method === 'DELETE') return apiDocDelete(request, env, u, id);
+      }
+      const dvm = p.match(/^\/api\/docs\/(\d+)\/versions\/(\d+)$/);
+      if (dvm && method === 'GET') return apiDocVersion(request, env, parseInt(dvm[1], 10), parseInt(dvm[2], 10));
+      const dcm = p.match(/^\/api\/docs\/(\d+)\/comment$/);
+      if (dcm && method === 'POST') return apiDocComment(request, env, u, parseInt(dcm[1], 10));
       if (p === '/api/upload' && method === 'POST') return apiUpload(request, env, u);
       if (p.startsWith('/api/files/') && method === 'GET') return apiFileGet(request, env, p.slice('/api/files/'.length));
       if (p === '/api/requirements' && method === 'GET') return apiReqList(request, env, u);
