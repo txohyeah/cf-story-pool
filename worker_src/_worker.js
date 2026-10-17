@@ -238,11 +238,32 @@ async function apiProjectDelete(request, env, id) {
   if (!p) return json({ error: '项目不存在' }, 404);
   const n = (await env.DB.prepare('SELECT COUNT(*) AS n FROM requirements WHERE project_id = ?').bind(id).first()).n;
   if (n > 0) return json({ error: '项目下仍有需求，不能删除' }, 400);
+  // 级联清理 v1.0 新表引用（#196：docs/releases/test_cases 引用会让 DELETE 外键失败）
+  // 需求=0 的项目：docs/releases/test_cases 若有残留一并清理（照 apiReqDelete 的级联模式）
+  const docs = (await env.DB.prepare('SELECT id FROM docs WHERE project_id = ?').bind(id).all()).results;
+  const tcIds = (await env.DB.prepare('SELECT id FROM test_cases WHERE project_id = ?').bind(id).all()).results;
+  const atts = (await env.DB.prepare(
+    `SELECT a.store_key FROM attachments a JOIN requirements r ON r.id = a.req_id
+     WHERE r.project_id = ?`).bind(id).all()).results;
+  const stmts = [];
+  for (const d of docs) {
+    stmts.push(env.DB.prepare('DELETE FROM doc_comments WHERE doc_id = ?').bind(d.id));
+    stmts.push(env.DB.prepare('DELETE FROM doc_versions WHERE doc_id = ?').bind(d.id));
+  }
+  stmts.push(env.DB.prepare('DELETE FROM docs WHERE project_id = ?').bind(id));
+  for (const t of tcIds) {
+    stmts.push(env.DB.prepare('DELETE FROM tc_executions WHERE tc_id = ?').bind(t.id));
+    stmts.push(env.DB.prepare('DELETE FROM test_case_versions WHERE tc_id = ?').bind(t.id));
+  }
+  stmts.push(env.DB.prepare('DELETE FROM test_cases WHERE project_id = ?').bind(id));
+  stmts.push(env.DB.prepare('DELETE FROM releases WHERE project_id = ?').bind(id));
+  for (const a of atts) {
+    stmts.push(env.DB.prepare('DELETE FROM attachment_blobs WHERE token = ?').bind(a.store_key));
+  }
   // 先清标签归属引用，否则外键约束会让 DELETE 失败
-  await env.DB.batch([
-    env.DB.prepare('DELETE FROM project_tags WHERE project_id = ?').bind(id),
-    env.DB.prepare('DELETE FROM projects WHERE id = ?').bind(id),
-  ]);
+  stmts.push(env.DB.prepare('DELETE FROM project_tags WHERE project_id = ?').bind(id));
+  stmts.push(env.DB.prepare('DELETE FROM projects WHERE id = ?').bind(id));
+  await env.DB.batch(stmts);
   return json({ ok: true });
 }
 
