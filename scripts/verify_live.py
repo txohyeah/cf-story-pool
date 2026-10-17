@@ -322,6 +322,44 @@ def main():
         check('有需求项目禁删', False, 'vpid 缺失，无法执行')
         check('空项目删除闭环', False, 'vpid 缺失，无法执行')
 
+    # 18.5 文档页闭环（v2 P0：md 文档 + 版本快照 + 评论绑版本 + 状态流转）
+    if vpid:
+        s, d = jreq('POST', '/api/docs', {
+            'project_id': vpid, 'title': '[verify] 自检文档',
+            'content_md': '# v1 内容\n\n| 列A | 列B |\n|---|---|\n| 1 | 2 |'}, cookie=cookie)
+        doc_id = d.get('id')
+        check('文档创建', bool(doc_id))
+        if doc_id:
+            s, d = jreq('GET', '/api/docs/%d' % doc_id, cookie=cookie)
+            check('文档详情与首版内容', s == 200 and d.get('content_md', '').startswith('# v1')
+                  and d.get('doc', {}).get('current_version') == 1)
+            s, d = jreq('PATCH', '/api/docs/%d' % doc_id,
+                        {'content_md': '# v2 内容', 'change_summary': '自检升版'}, cookie=cookie)
+            check('文档编辑升版 v2', d.get('ok') and d.get('version') == 2)
+            s, d = jreq('POST', '/api/docs/%d/comment' % doc_id, {'content': '[verify] 评审意见'}, cookie=cookie)
+            s, d = jreq('GET', '/api/docs/%d' % doc_id, cookie=cookie)
+            cms = d.get('comments', [])
+            check('文档评论绑版本', d.get('ok') and len(cms) == 1 and cms[0].get('doc_version') == 2)
+            s, d = jreq('PATCH', '/api/docs/%d' % doc_id, {'status': 'review'}, cookie=cookie)
+            s, d = jreq('PATCH', '/api/docs/%d' % doc_id, {'status': 'approved'}, cookie=cookie)
+            s, d = jreq('GET', '/api/docs/%d' % doc_id, cookie=cookie)
+            check('文档批准落 approved_by', d.get('doc', {}).get('status') == 'approved' and d['doc'].get('approved_by'))
+            s, d = jreq('PATCH', '/api/docs/%d' % doc_id, {'content_md': '# v3 批准后编辑'}, cookie=cookie)
+            s, d = jreq('GET', '/api/docs/%d' % doc_id, cookie=cookie)
+            check('批准后编辑回草稿', d.get('doc', {}).get('status') == 'draft' and d['doc']['current_version'] == 3)
+            s, d = jreq('GET', '/api/docs/%d/versions/1' % doc_id, cookie=cookie)
+            check('历史版本回看 v1', s == 200 and d.get('content_md', '').startswith('# v1'))
+            s, d = jreq('GET', '/api/docs?project_id=%d' % vpid, cookie=cookie)
+            check('文档列表含自检文档', any(x['id'] == doc_id for x in d.get('items', [])))
+            s, d = jreq('DELETE', '/api/docs/%d' % doc_id, cookie=cookie)
+            check('测试文档清理', d.get('ok'))
+    else:
+        check('文档创建', False, 'vpid 缺失，无法执行')
+    for path, name in [('/docs.html', '文档列表页 200'), ('/doc.html', '文档详情页 200'),
+                       ('/marked.min.js', 'md 渲染库 200'), ('/purify.min.js', 'XSS 消毒库 200')]:
+        s, _h, _b = http('GET', path, headers={'Cookie': cookie})
+        check(name, s == 200)
+
     # 19. cookie 文件（pw.py 核对用）
     fd = os.open(COOKIE_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     os.write(fd, ('%s=%s' % (COOKIE_NAME, cookie.split('=', 1)[1])).encode())

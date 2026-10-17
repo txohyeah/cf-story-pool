@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文档 - 需求池</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  .md-body { line-height: 1.75; overflow-x: auto; }
+  .md-body table { border-collapse: collapse; margin: 10px 0; display: block; overflow-x: auto; max-width: 100%; }
+  .md-body th, .md-body td { border: 1px solid #d8d8e0; padding: 6px 10px; font-size: 13px; }
+  .md-body th { background: #f4f4f8; }
+  .md-body img { max-width: 100%; }
+  .md-body code { background: #f4f4f8; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  .md-body pre code { display: block; padding: 10px; overflow-x: auto; }
+  .md-body blockquote { border-left: 3px solid #c7c7d4; margin: 8px 0; padding: 2px 12px; color: #555; }
+  .ver-row { padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+  .ver-row:hover { background: #f2f2f8; }
+  .ver-row.cur { background: #eef2ff; }
+  .cm-row { border-top: 1px solid #eee; padding: 8px 0; font-size: 13px; }
+  .editing #md-view, .editing #btn-edit, .editing #btn-status { display: none; }
+  body:not(.editing) #md-editor { display: none; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <a class="btn small" href="/docs.html?project=0" id="back-link">📄 文档列表</a>
+  <span style="flex:1"></span>
+  <button class="btn primary small" id="btn-edit">✏️ 编辑</button>
+  <button class="btn small" id="btn-status"></button>
+</div>
+<div class="wrap list-layout">
+  <div class="card" style="flex:1;min-width:0">
+    <div id="hist-banner" style="display:none;background:#fef3c7;color:#92400e;padding:8px 12px;border-radius:8px;margin-bottom:10px;font-size:13px"></div>
+    <h2 id="d-title" style="margin:0 0 6px"></h2>
+    <div id="d-meta" style="color:#888;font-size:13px;margin-bottom:14px"></div>
+    <div id="md-view" class="md-body"></div>
+    <div id="md-editor">
+      <input id="e-title" style="width:100%;padding:8px;margin-bottom:8px" maxlength="200">
+      <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+        <label class="btn small">🖼 插图<input type="file" id="img-file" accept="image/*" style="display:none"></label>
+        <button class="btn small" id="btn-preview">预览</button>
+        <span style="flex:1"></span>
+        <span class="sub" style="color:#888;font-size:12px">Markdown 语法，支持表格</span>
+      </div>
+      <textarea id="e-md" style="width:100%;min-height:340px;padding:10px;font-family:monospace;font-size:13px;box-sizing:border-box"></textarea>
+      <div id="e-preview" class="md-body" style="display:none;border:1px solid #e4e4ee;border-radius:8px;padding:12px;min-height:200px"></div>
+      <div class="fld-row" style="margin-top:8px"><label>修订摘要</label><input id="e-summary" style="flex:1;padding:8px" maxlength="300" placeholder="本次改了什么（选填）"></div>
+      <div class="err" id="e-err" style="display:none"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+        <button class="btn" id="btn-cancel">取消</button>
+        <button class="btn primary" id="btn-save">保存为新版本</button>
+      </div>
+    </div>
+  </div>
+  <div style="width:260px;flex-shrink:0;display:flex;flex-direction:column;gap:12px">
+    <div class="card">
+      <strong style="font-size:13px">版本历史</strong>
+      <div id="ver-list" style="margin-top:6px"></div>
+    </div>
+    <div class="card">
+      <strong style="font-size:13px">评论 <span class="sub" id="cm-count" style="color:#888"></span></strong>
+      <div id="cm-list" style="margin-top:6px"></div>
+      <textarea id="cm-input" style="width:100%;min-height:60px;padding:8px;margin-top:8px;box-sizing:border-box" placeholder="评论（自动绑定当前查看的版本）"></textarea>
+      <div class="err" id="cm-err" style="display:none"></div>
+      <div style="margin-top:6px;text-align:right"><button class="btn primary small" id="cm-go">发送评论</button></div>
+    </div>
+  </div>
+</div>
+
+<script src="/marked.min.js"></script>
+<script src="/purify.min.js"></script>
+<script>
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (r.status === 401) { location.href = '/login'; return {}; }
+  return r.json();
+}
+function logout() { fetch('/api/logout', { method: 'POST' }).then(() => location.href = '/login'); }
+function $(id) { return document.getElementById(id); }
+function mdRender(s) { return DOMPurify.sanitize(marked.parse(s || '')); }
+
+const ST = { draft: ['草稿', '#888', '#f2f2f2'], review: ['评审中', '#b45309', '#fef3c7'], approved: ['已批准', '#15803d', '#dcfce7'] };
+function stBadge(s) { const [t, fg, bg] = ST[s] || ST.draft; return `<span class="badge" style="color:${fg};background:${bg}">${t}</span>`; }
+
+let doc = null, comments = [], versions = [], viewVer = null, me = null;
+
+async function init() {
+  const id = parseInt(new URLSearchParams(location.search).get('id'), 10);
+  if (!id) { location.href = '/docs.html'; return; }
+  const m = await api('/api/me');
+  me = m && m.user;
+  if (new URLSearchParams(location.search).get('edit') === '1') document.body.classList.add('editing');
+  await load(id);
+}
+
+async function load(id) {
+  const r = await api('/api/docs/' + id);
+  if (!r || !r.ok) { $('d-title').textContent = '文档不存在'; return; }
+  doc = r.doc; comments = r.comments; versions = r.versions;
+  viewVer = null;
+  $('hist-banner').style.display = 'none';
+  $('back-link').href = '/docs.html?project=' + doc.project_id;
+  $('d-title').textContent = doc.title;
+  $('d-meta').innerHTML = `v${doc.current_version} ｜ ${stBadge(doc.status)} ｜ 创建 ${esc(doc.author)}` +
+    (doc.status === 'approved' && doc.approved_at ? ` ｜ 批准 ${esc((doc.approved_at || '').slice(0, 10))}` : '') +
+    ` ｜ 更新 ${esc((doc.updated_at || '').slice(0, 10))}`;
+  $('md-view').innerHTML = mdRender(r.content_md);
+  $('ver-list').innerHTML = versions.map(v => `
+    <div class="ver-row ${v.version === doc.current_version ? 'cur' : ''}" onclick="viewHistory(${v.version})">
+      <strong>v${v.version}</strong> ${v.version === doc.current_version ? '<span style="color:#4f46e5">当前</span>' : ''}
+      <div class="sub" style="color:#888;font-size:12px">${esc(v.author || '')} ｜ ${esc((v.created_at || '').slice(0, 10))}${v.change_summary ? ' ｜ ' + esc(v.change_summary) : ''}</div>
+    </div>`).join('');
+  renderComments();
+  const stBtn = $('btn-status');
+  if (doc.status === 'draft') { stBtn.textContent = '提交评审'; stBtn.onclick = () => setStatus('review'); }
+  else if (doc.status === 'review') { stBtn.textContent = '批准'; stBtn.onclick = () => setStatus('approved'); }
+  else { stBtn.textContent = '撤回草稿'; stBtn.onclick = () => setStatus('draft'); }
+  $('e-title').value = doc.title;
+}
+
+function renderComments() {
+  $('cm-count').textContent = `（${comments.length}）`;
+  $('cm-list').innerHTML = comments.map(c => `
+    <div class="cm-row">
+      <div><strong>${esc(c.user)}</strong> <span style="color:#4f46e5;font-size:12px">针对 v${c.doc_version}</span>
+        <span style="color:#aaa;font-size:12px"> ${esc((c.created_at || '').slice(0, 16).replace('T', ' '))}</span></div>
+      <div style="white-space:pre-wrap;margin-top:2px">${esc(c.content)}</div>
+    </div>`).join('') || '<div class="sub" style="color:#aaa;padding:8px 0">暂无评论</div>';
+}
+
+async function viewHistory(v) {
+  if (v === doc.current_version) { viewVer = null; $('hist-banner').style.display = 'none'; return load(doc.id); }
+  const r = await api(`/api/docs/${doc.id}/versions/${v}`);
+  if (!r || !r.ok) return;
+  viewVer = v;
+  $('hist-banner').innerHTML = `正在查看历史版本 <strong>v${v}</strong>（${esc(r.author || '')}，${esc((r.created_at || '').slice(0, 10))}）— <a href="javascript:viewVer=null;load(${doc.id})" style="color:#4f46e5">返回当前版</a>`;
+  $('hist-banner').style.display = 'block';
+  $('md-view').innerHTML = mdRender(r.content_md);
+}
+
+async function setStatus(st) {
+  const r = await api('/api/docs/' + doc.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: st })
+  });
+  if (r && r.ok) load(doc.id);
+}
+
+$('btn-edit').onclick = () => { document.body.classList.add('editing'); $('e-md').value = $('md-view').innerHTML ? currentMd() : ''; };
+// 编辑进入时用当前查看版本的源文本（历史版编辑=基于该版另存新版本）
+async function currentMd() {
+  if (viewVer) { const r = await api(`/api/docs/${doc.id}/versions/${viewVer}`); return r && r.ok ? r.content_md : ''; }
+  const r = await api('/api/docs/' + doc.id); return r && r.ok ? r.content_md : '';
+}
+$('btn-edit').onclick = async () => {
+  document.body.classList.add('editing');
+  $('e-md').value = await currentMd();
+  $('e-preview').style.display = 'none'; $('e-md').style.display = 'block'; $('btn-preview').textContent = '预览';
+};
+$('btn-cancel').onclick = () => document.body.classList.remove('editing');
+$('btn-preview').onclick = () => {
+  const showing = $('e-preview').style.display !== 'none';
+  if (showing) { $('e-preview').style.display = 'none'; $('e-md').style.display = 'block'; $('btn-preview').textContent = '预览'; }
+  else { $('e-preview').innerHTML = mdRender($('e-md').value); $('e-preview').style.display = 'block'; $('e-md').style.display = 'none'; $('btn-preview').textContent = '编辑'; }
+};
+
+$('btn-save').onclick = async () => {
+  const content = $('e-md').value;
+  if (!content.trim()) { $('e-err').textContent = '内容不能为空'; $('e-err').style.display = 'block'; return; }
+  const r = await api('/api/docs/' + doc.id, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: $('e-title').value.trim(), content_md: content, change_summary: $('e-summary').value.trim() })
+  });
+  if (r && r.ok) { document.body.classList.remove('editing'); load(doc.id); }
+  else { $('e-err').textContent = (r && r.error) || '保存失败'; $('e-err').style.display = 'block'; }
+};
+
+// 图片上传：压缩 → /api/upload → 在光标处插入 md 图片语法
+$('img-file').onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  const c = await compressImage(f);
+  const fd = new FormData(); fd.append('file', c);
+  $('btn-preview').textContent = '上传中…';
+  const r = await api('/api/upload', { method: 'POST', body: fd });
+  if (r && r.ok) {
+    const tag = `![${esc(r.name || 'image')}](/api/files/${r.key})`;
+    const ta = $('e-md'), pos = ta.selectionStart || ta.value.length;
+    ta.value = ta.value.slice(0, pos) + '\n' + tag + '\n' + ta.value.slice(pos);
+    if ($('e-preview').style.display !== 'none') $('e-preview').innerHTML = mdRender(ta.value);
+  } else alert((r && r.error) || '上传失败');
+};
+async function compressImage(file) {
+  if (file.type === 'image/gif') return file;
+  if (file.size <= 300 * 1024) return file;
+  const img = await createImageBitmap(file);
+  const maxSide = 1600;
+  const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.8));
+  return new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' });
+}
+
+$('cm-go').onclick = async () => {
+  const text = $('cm-input').value.trim();
+  if (!text) { $('cm-err').textContent = '评论不能为空'; $('cm-err').style.display = 'block'; return; }
+  const r = await api(`/api/docs/${doc.id}/comment`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: text, version: viewVer || doc.current_version })
+  });
+  if (r && r.ok) { $('cm-input').value = ''; $('cm-err').style.display = 'none'; load(doc.id).then(() => { if (viewVer) viewHistory(viewVer); }); }
+  else { $('cm-err').textContent = (r && r.error) || '评论失败'; $('cm-err').style.display = 'block'; }
+};
+
+init();
+</script>
+</body>
+</html>

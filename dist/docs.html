@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文档 - 需求池</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="topbar">
+  <a class="btn small" href="/index.html">📁 需求列表</a>
+  <a class="btn primary small" href="/new.html">＋ 新需求</a>
+  <span style="flex:1"></span>
+  <a class="btn small" href="javascript:openPwdModal()">改密码</a>
+  <a class="btn small" href="javascript:logout()">退出</a>
+</div>
+<div class="wrap">
+  <div class="card" style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <strong>📄 文档</strong>
+    <select id="proj-sel" class="fld-row" style="padding:6px 8px"></select>
+    <span style="flex:1"></span>
+    <button class="btn primary small" id="btn-new-doc">＋ 新文档</button>
+  </div>
+  <div id="list" class="proj-grid"></div>
+  <div id="empty" class="card" style="display:none;text-align:center;color:#888">本项目暂无文档，点右上角「＋ 新文档」创建第一篇</div>
+</div>
+
+<div class="modal-overlay" id="new-overlay" style="display:none">
+  <div class="modal card" style="width:min(480px,92vw)">
+    <h3>新建文档</h3>
+    <div class="fld-row"><label>所属项目</label><select id="n-proj" style="flex:1;padding:8px"></select></div>
+    <div class="fld-row"><label>标题</label><input id="n-title" style="flex:1;padding:8px" maxlength="200" placeholder="文档标题"></div>
+    <div class="err" id="n-err" style="display:none"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button class="btn" onclick="closeNew()">取消</button>
+      <button class="btn primary" id="n-save">创建并编辑</button>
+    </div>
+  </div>
+</div>
+
+<script src="/marked.min.js"></script>
+<script src="/purify.min.js"></script>
+<script>
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (r.status === 401) { location.href = '/login'; return {}; }
+  return r.json();
+}
+function logout() { fetch('/api/logout', { method: 'POST' }).then(() => location.href = '/login'); }
+function openPwdModal() { location.href = '/index.html'; }
+
+const ST = { draft: ['草稿', '#888', '#f2f2f2'], review: ['评审中', '#b45309', '#fef3c7'], approved: ['已批准', '#15803d', '#dcfce7'] };
+function stBadge(s) { const [t, fg, bg] = ST[s] || ST.draft; return `<span class="badge" style="color:${fg};background:${bg}">${t}</span>`; }
+
+let projects = [];
+async function init() {
+  const b = await api('/api/bootstrap');
+  projects = (b && b.projects) || [];
+  const sel = $('proj-sel'), nsel = $('n-proj');
+  sel.innerHTML = nsel.innerHTML = projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  const want = new URLSearchParams(location.search).get('project');
+  if (want && projects.some(p => String(p.id) === want)) { sel.value = want; nsel.value = want; }
+  sel.onchange = () => { location.href = '/docs.html?project=' + sel.value; };
+  $('btn-new-doc').onclick = () => { $('new-overlay').style.display = 'flex'; };
+  await loadList();
+}
+function $(id) { return document.getElementById(id); }
+function closeNew() { $('new-overlay').style.display = 'none'; $('n-err').style.display = 'none'; }
+
+async function loadList() {
+  const pid = $('proj-sel').value;
+  if (!pid) return;
+  const r = await api('/api/docs?project_id=' + pid);
+  const items = (r && r.items) || [];
+  $('empty').style.display = items.length ? 'none' : 'block';
+  $('list').innerHTML = items.map(d => `
+    <div class="proj-card" onclick="location.href='/doc.html?id=${d.id}'">
+      <div class="proj-head">
+        <strong>${esc(d.title)}</strong>
+        ${stBadge(d.status)}
+      </div>
+      <div class="sub" style="margin-top:6px;color:#888;font-size:12px">
+        v${d.current_version} ｜ ${esc(d.author)} ｜ 💬 ${d.comment_count} ｜ 更新 ${esc((d.updated_at || '').slice(0, 10))}
+      </div>
+    </div>`).join('');
+}
+
+$('n-save').onclick = async () => {
+  const title = $('n-title').value.trim();
+  if (!title) { $('n-err').textContent = '标题不能为空'; $('n-err').style.display = 'block'; return; }
+  const r = await api('/api/docs', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: parseInt($('n-proj').value, 10), title, content_md: '## ' + title + '\n\n（编辑内容…）\n' })
+  });
+  if (r && r.ok) location.href = '/doc.html?id=' + r.id + '&edit=1';
+  else { $('n-err').textContent = (r && r.error) || '创建失败'; $('n-err').style.display = 'block'; }
+};
+
+init();
+</script>
+</body>
+</html>
