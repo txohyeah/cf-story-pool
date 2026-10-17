@@ -59,7 +59,7 @@ function stBadge(s) { const [t, fg, bg] = RST[s] || RST.planning; return `<span 
 
 let me = null;
 async function init() {
-  const m = await api('/api/me'); me = m && m.user;
+  const m = await api('/api/me'); me = (m && m.authed) ? m.user_id : null;  // /api/me 返回 user_id（无 user 嵌套）
   const b = await api('/api/bootstrap');
   const projects = (b && b.projects) || [];
   const sel = $('proj-sel'), nsel = $('n-proj');

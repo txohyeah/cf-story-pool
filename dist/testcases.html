@@ -73,7 +73,7 @@ const RES = { pass: ['通过', '#15803d', '#dcfce7'], fail: ['未通过', '#b91c
               deviation: ['偏差', '#c2410c', '#ffedd5'], '': ['未执行', '#888', '#f2f2f2'] };
 
 async function init() {
-  const m = await api('/api/me'); me = m && m.user;
+  const m = await api('/api/me'); me = (m && m.authed) ? m.user_id : null;  // /api/me 返回 user_id
   const b = await api('/api/bootstrap');
   const projects = (b && b.projects) || [];
   $('proj-sel').innerHTML = $('n-proj').innerHTML = projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
