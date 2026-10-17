@@ -495,8 +495,8 @@ async function apiReqDetail(request, env, u, id) {
      LEFT JOIN users us ON us.id = r.created_by
      WHERE r.id = ?`).bind(id).first());
   if (!r) return json({ error: '需求不存在' }, 404);
-  // 互不依赖的 5 路查询并行（原串行 5 次 D1 往返，是详情页慢的主因之一）
-  const [tagsR, attsR, ckR, evR, dupOf] = await Promise.all([
+  // 互不依赖的 6 路查询并行（原串行 5 次 D1 往返，是详情页慢的主因之一）
+  const [tagsR, attsR, ckR, evR, dupOf, tcR] = await Promise.all([
     env.DB.prepare(
       `SELECT t.id, t.name FROM requirement_tags rt JOIN tags t ON t.id = rt.tag_id
        WHERE rt.req_id = ? ORDER BY t.name`).bind(id).all(),
@@ -514,10 +514,14 @@ async function apiReqDetail(request, env, u, id) {
     r.duplicate_of
       ? env.DB.prepare('SELECT id, title, status FROM requirements WHERE id = ?')
           .bind(r.duplicate_of).first()
-      : Promise.resolve(null)
+      : Promise.resolve(null),
+    // 抽屉↔用例库联动：关联用例快捷方式
+    env.DB.prepare(
+      `SELECT id, tc_code, title, status, risk FROM test_cases
+       WHERE related_req = ? ORDER BY tc_code ASC`).bind(id).all()
   ]);
   return json({ ok: true, req: r, tags: tagsR.results, attachments: attsR.results,
-    checklist: ckR.results, events: evR.results, dup_of: dupOf });
+    checklist: ckR.results, events: evR.results, dup_of: dupOf, related_cases: tcR.results });
 }
 
 // ---------- 编辑/流转 ----------

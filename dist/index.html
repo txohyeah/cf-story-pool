@@ -426,6 +426,12 @@ function renderInfo() {
   const dup = D.dup_of
     ? '<div style="margin-top:6px">↩️ 重复单，原单：<a href="javascript:void(0)" onclick="gotoReq(' + D.dup_of.id + ')">#' + D.dup_of.id
       + ' ' + esc(D.dup_of.title) + '</a></div>' : '';
+  const rc = (D.related_cases && D.related_cases.length)
+    ? '<div style="margin-top:10px"><strong style="font-size:13px">🧪 关联用例（' + D.related_cases.length + '）</strong>'
+      + D.related_cases.map(c => '<div style="margin-top:4px"><a href="/testcases.html?project=' + r.project_id + '&tc=' + c.id
+        + '" style="font-family:monospace;color:#4f46e5;font-weight:600">' + esc(c.tc_code) + '</a> '
+        + esc(c.title) + ' <span class="sub" style="font-size:12px;color:#888">' + (c.status === 'approved' ? '已批准' : '草稿') + '</span></div>').join('')
+      + '</div>' : '';
   $('info').innerHTML =
     '<div class="ri-top"><span class="rid">#' + r.id + '</span>'
     + '<span class="ri-title" style="font-size:17px">' + esc(r.title) + '</span>'
@@ -443,7 +449,7 @@ function renderInfo() {
       + (r.ref_code ? '<span>关联编号：' + esc(r.ref_code) + '</span>' : '')
       + '</div>' : '')
     + (r.description ? '<div style="margin-top:10px;white-space:pre-wrap">' + esc(r.description) + '</div>' : '')
-    + dup
+    + dup + rc
     + '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">'
     + '<button class="btn small" id="btn-edit">编辑</button>'
     + '<button class="btn small danger" id="btn-del">删除</button></div>';
