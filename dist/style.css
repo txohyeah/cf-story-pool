@@ -10,7 +10,8 @@ body { margin: 0; background: var(--bg); color: var(--txt);
   font: 15px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
 a { color: var(--blue); text-decoration: none; }
 .topbar { background: var(--card); border-bottom: 1px solid var(--line);
-  padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  position: sticky; top: 0; z-index: 40; box-shadow: 0 2px 8px rgba(15, 23, 42, .06); }
 .topbar .brand { font-weight: 700; font-size: 17px; color: var(--txt); }
 .topbar .sp { flex: 1; }
 .btn { display: inline-block; border: 1px solid var(--line); background: var(--card);
