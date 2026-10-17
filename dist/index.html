@@ -188,6 +188,17 @@
 
     <div class="card">
       <h3>💬 评论</h3>
+      <div class="fld-row" style="margin-bottom:6px">
+        <label class="fld" style="min-width:150px"><span>类型</span><select id="c-ctype">
+          <option value="normal">普通评论</option>
+          <option value="ac">验收标准</option>
+          <option value="testcase">测试用例</option>
+        </select></label>
+        <label class="fld" style="min-width:130px"><span>只看类型</span><select id="c-filter">
+          <option value="">全部</option><option value="normal">普通</option>
+          <option value="ac">验收标准</option><option value="testcase">测试用例</option>
+        </select></label>
+      </div>
       <textarea id="c-text" rows="3" placeholder="补充信息、确认结果…"></textarea>
       <div style="margin-top:8px"><button class="btn primary small" id="c-go">发送评论</button></div>
     </div>
@@ -571,7 +582,12 @@ function renderAtts() {
 
 function renderEvents() {
   const CN = { todo: '待办', doing: '进行中', done: '完成' };
-  $('events').innerHTML = D.events.map(e => {
+  const cf = $('c-filter') ? $('c-filter').value : '';
+  const CTN = { ac: '验收标准', testcase: '测试用例' };
+  const CTC = { ac: '#4f46e5', testcase: '#0f766e' };
+  $('events').innerHTML = D.events
+    .filter(e => !(e.action === 'comment' && cf && (e.ctype || 'normal') !== cf))
+    .map(e => {
     let body = '';
     let j = null;
     try { j = JSON.parse(e.detail); } catch (x) { j = null; }
@@ -592,10 +608,13 @@ function renderEvents() {
     }
     return '<div class="evt"><span class="who">' + esc(e.actor_name || '-') + '</span>'
       + '<span>' + (ACTN[e.action] || e.action) + '</span>'
+      + (e.action === 'comment' && e.ctype && e.ctype !== 'normal'
+        ? '<span class="badge" style="color:#fff;background:' + (CTC[e.ctype] || '#888') + '">' + (CTN[e.ctype] || e.ctype) + '</span>' : '')
       + '<span class="when">' + fmtTime(e.created_at) + '</span>'
       + (body ? '<div>' + body + '</div>' : '') + '</div>';
   }).join('');
 }
+$('c-filter').addEventListener('change', renderEvents);
 
 $('e-save').onclick = async () => {
   $('e-err').textContent = '';
@@ -612,7 +631,7 @@ $('c-go').onclick = async () => {
   if (!text) return;
   const d = await api('/api/requirements/' + curReqId + '/comment', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }) });
+    body: JSON.stringify({ text, ctype: $('c-ctype').value }) });
   if (d.ok) { $('c-text').value = ''; loadReq(curReqId); }
 };
 
