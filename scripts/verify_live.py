@@ -514,6 +514,18 @@ def main():
             s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
             still = [p for p in d2.get('projects', []) if p['id'] == dpid]
         check('文档测试项目清理闭环', not still)
+        # ---- #196 级联删除：带 docs/releases/test_cases 的项目可直接删 ----
+        s, d = jreq('POST', '/api/projects', {'name': '[verify] 级联项目'}, cookie=cookie)
+        cid = d.get('id')
+        if cid:
+            s, d = jreq('POST', '/api/docs', {'project_id': cid, 'title': '[verify] 级联doc', 'content_md': 'x'}, cookie=cookie)
+            s, d = jreq('POST', '/api/releases', {'project_id': cid, 'version': 'v0.0-cascade'}, cookie=cookie)
+            s, d = jreq('POST', '/api/testcases', {'project_id': cid, 'title': '[verify] 级联tc'}, cookie=cookie)
+            s, d = jreq('DELETE', '/api/projects/%d' % cid, cookie=cookie)
+            ok_del = bool(d) and d.get('ok')
+            s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
+            gone = not any(p['id'] == cid for p in d2.get('projects', []))
+            check('#196 级联删除（含doc/release/tc项目）', ok_del and gone)
     else:
         check('文档创建', False, 'dpid 缺失，无法执行')
     for path, name in [('/docs.html', '文档列表页 200'), ('/doc.html', '文档详情页 200'),
