@@ -106,10 +106,12 @@ async function loadList() {
 
 function closeDetail() { $('detail').classList.remove('open'); $('detail').innerHTML = ''; }
 
+async function apiTcDetailWithApprover(id) { return api('/api/testcases/' + id); }
 async function openTc(id) {
-  const d = await api('/api/testcases/' + id);
+  const d = await apiTcDetailWithApprover(id);
   if (!d || !d.ok) return;
   const t = d.tc, ex = d.executions;
+  // 批准人显示：approved_by 是 id，从 versions/executors 不可得——detail 补 approver 名（worker 返回 approver 字段）
   const el = $('detail');
   el.classList.add('open');
   el.innerHTML = `
@@ -121,6 +123,7 @@ async function openTc(id) {
     </div>
     <div class="sub" style="color:#888;font-size:12px;margin:6px 0">
       风险 ${RN[t.risk]} ｜ ${CT[t.ctype]} ｜ v${t.current_version} ｜ 创建 ${esc(t.creator || '-')}
+      ${t.status === 'approved' && t.approved_at ? ' ｜ 批准 ' + esc(t.approver || '-') + ' ' + esc(t.approved_at.slice(0, 10)) : ''}
       ${t.related_req ? ' ｜ 关联需求 <a href="javascript:void(0)" onclick="sessionStorage.tcBack=1;location.href=\'/index.html?project=' + t.project_id + '&req=' + t.related_req + '\'">#' + t.related_req + '</a>' : ''}
       ${t.covers_urs ? ' ｜ URS：' + esc(t.covers_urs) : ''}
     </div>
