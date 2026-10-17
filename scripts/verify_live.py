@@ -445,6 +445,16 @@ def main():
                 s, d = jreq('PATCH', '/api/testcases/%d' % tc_id, {'steps_md': '批准后改动'}, cookie=cookie)
                 s, d = jreq('GET', '/api/testcases/%d' % tc_id, cookie=cookie)
                 check('R5 批准后编辑回草稿', d.get('tc', {}).get('status') == 'draft')
+                # 抽屉↔用例库联动：需求详情 related_cases
+                s, d = jreq('POST', '/api/requirements', {'project_id': dpid, 'title': '[verify] 用例联动探针'}, cookie=cookie)
+                link_req = d.get('id')
+                s, d = jreq('PATCH', '/api/testcases/%d' % tc_id, {'related_req': link_req}, cookie=cookie)
+                s, d = jreq('GET', '/api/requirements/%d' % link_req, cookie=cookie)
+                rcs = d.get('related_cases', [])
+                check('抽屉联动 related_cases', bool(rcs) and any(c.get('id') == tc_id for c in rcs)
+                      and rcs[0].get('tc_code', '').startswith('TC-'))
+                if link_req:
+                    s, d = jreq('DELETE', '/api/requirements/%d' % link_req, cookie=cookie)
                 s, d = jreq('PUT', '/api/testcases/%d/execution' % tc_id,
                             {'release_id': rel2, 'result': 'pass', 'conclusion': '自检执行',
                              'dev_ref': '', 'ev_ref': 'EV-TEST'}, cookie=cookie)

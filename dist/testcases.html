@@ -77,11 +77,23 @@ async function init() {
   const b = await api('/api/bootstrap');
   const projects = (b && b.projects) || [];
   $('proj-sel').innerHTML = $('n-proj').innerHTML = projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
-  const want = new URLSearchParams(location.search).get('project');
+  const SP = new URL(location.href).searchParams;
+  const want = SP.get('project');
   if (want && projects.some(p => String(p.id) === want)) { $('proj-sel').value = want; $('n-proj').value = want; }
   $('proj-sel').onchange = () => { closeDetail(); loadList(); };
   $('btn-new-tc').onclick = () => { $('new-overlay').style.display = 'flex'; };
   await loadList();
+  // 抽屉↔用例库联动：?tc=<id> 从需求抽屉跳入时自动切项目并展开该用例
+  const tcWanted = parseInt(SP.get('tc'), 10);
+  if (tcWanted) {
+    const det = await api('/api/testcases/' + tcWanted);
+    if (det && det.ok) {
+      $('proj-sel').value = String(det.tc.project_id);
+      await loadList();
+      openTc(tcWanted);
+      $('detail').scrollIntoView({ behavior: 'smooth' });
+    }
+  }
 }
 let me = null, releases = [];
 
