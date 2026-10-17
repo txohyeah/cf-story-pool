@@ -368,10 +368,13 @@ def main():
             check('测试文档清理', d.get('ok'))
         # ---- R3/R2：单据字段增强 + 筛选导出 ----
         if dpid:
-            s, d = jreq('POST', '/api/requirements', {
-                'project_id': dpid, 'title': '[verify] Bug探针', 'type': 'bug',
-                'severity': 'major', 'root_cause': 'defect', 'ref_code': 'ISS-2099-001',
-                'description': 'R3验证'}, cookie=cookie)
+            s, d = jreq('POST', '/api/upload', files={'file': ('r.png', make_png(), 'image/png')}, cookie=cookie)
+            up_key = d.get('key') if isinstance(d, dict) and d.get('ok') else None
+            body_r3 = {'project_id': dpid, 'title': '[verify] Bug探针', 'type': 'bug',
+                       'severity': 'major', 'root_cause': 'defect', 'ref_code': 'ISS-2099-001',
+                       'description': 'R3验证'}
+            if up_key: body_r3['attachments'] = [{'key': up_key, 'name': 'r.png', 'size': len(make_png())}]
+            s, d = jreq('POST', '/api/requirements', body_r3, cookie=cookie)
             bid = d.get('id')
             if not bid:
                 s2, d2 = jreq('GET', '/api/requirements?project=%d&type=bug' % dpid, cookie=cookie)
@@ -383,6 +386,9 @@ def main():
                 rq = d.get('req', {})
                 check('R3 字段回读', rq.get('severity') == 'major' and rq.get('root_cause') == 'defect'
                       and rq.get('ref_code') == 'ISS-2099-001')
+                # 附件缩略图字段回归（2026-10-17 破图 bug：detail 曾缺 r2_key 别名致前端 /api/files/undefined）
+                atts = d.get('attachments', [])
+                check('附件缩略图字段 r2_key 别名', bool(atts) and atts[0].get('r2_key') == atts[0].get('store_key'))
                 s, d = jreq('PATCH', '/api/requirements/%d' % bid, {'op': 'edit', 'severity': 'critical'}, cookie=cookie)
                 s, d = jreq('GET', '/api/requirements/%d' % bid, cookie=cookie)
                 check('R3 PATCH severity', d.get('req', {}).get('severity') == 'critical')

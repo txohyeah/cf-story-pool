@@ -501,7 +501,7 @@ async function apiReqDetail(request, env, u, id) {
       `SELECT t.id, t.name FROM requirement_tags rt JOIN tags t ON t.id = rt.tag_id
        WHERE rt.req_id = ? ORDER BY t.name`).bind(id).all(),
     env.DB.prepare(
-      `SELECT id, store_key, orig_name, size, created_at FROM attachments
+      `SELECT id, store_key, store_key AS r2_key, orig_name, size, created_at FROM attachments
        WHERE req_id = ? ORDER BY id`).bind(id).all(),
     env.DB.prepare(
       `SELECT c.id, c.content, c.status, c.sort_order, c.assignee_id, us.display_name AS assignee_name
