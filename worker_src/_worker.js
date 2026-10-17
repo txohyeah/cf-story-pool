@@ -626,6 +626,7 @@ async function apiReqDelete(request, env, u, id) {
 }
 
 // ---------- 评论 ----------
+const COMMENT_CTYPES = ['normal', 'ac', 'testcase'];   // R7：普通/验收标准/测试用例
 async function apiComment(request, env, u, id) {
   const r = (await env.DB.prepare('SELECT id FROM requirements WHERE id = ?').bind(id).first());
   if (!r) return json({ error: '需求不存在' }, 404);
@@ -633,9 +634,10 @@ async function apiComment(request, env, u, id) {
   try { body = await request.json(); } catch (e) {}
   const text = (body.text || '').trim().slice(0, 2000);
   if (!text) return json({ error: '评论不能为空' }, 400);
+  const ctype = COMMENT_CTYPES.includes(body.ctype) ? body.ctype : 'normal';
   await env.DB.prepare(
-    `INSERT INTO events (req_id, actor_id, action, detail) VALUES (?, ?, 'comment', ?)`)
-    .bind(id, u.userId, text).run();
+    `INSERT INTO events (req_id, actor_id, action, detail, ctype) VALUES (?, ?, 'comment', ?, ?)`)
+    .bind(id, u.userId, text, ctype).run();
   await env.DB.prepare('UPDATE requirements SET updated_at = ? WHERE id = ?').bind(nowIso(), id).run();
   return json({ ok: true });
 }
@@ -707,6 +709,19 @@ async function apiChkDelete(request, env, u, cid) {
 }
 
 // ---------- 上传（存 D1 BLOB；R2 预留切换点） ----------
+// ---------- R10 图片存储抽象层：换后端（OSS/R2）时只改 BlobStorage，调用方与 URL 不变 ----------
+const BlobStorage = {
+  async put(env, mime, size, data) {
+    const token = crypto.randomUUID();
+    await env.DB.prepare('INSERT INTO attachment_blobs (token, mime, size, data) VALUES (?, ?, ?, ?)')
+      .bind(token, mime, size, data).run();
+    return token;
+  },
+  async get(env, token) {
+    return env.DB.prepare('SELECT mime, data FROM attachment_blobs WHERE token = ?').bind(token).first();
+  }
+};
+
 async function apiUpload(request, env, u) {
   let form;
   try { form = await request.formData(); } catch (e) { return json({ error: '表单解析失败' }, 400); }
@@ -715,10 +730,7 @@ async function apiUpload(request, env, u) {
   const ct = file.type || '';
   if (!EXTS[ct]) return json({ error: '仅支持图片（png/jpg/webp/gif）' }, 400);
   if (file.size > MAX_FILE_BYTES) return json({ error: '单张图片不超过 2MB' }, 400);
-  const token = crypto.randomUUID();
-  await env.DB.prepare(
-    'INSERT INTO attachment_blobs (token, mime, size, data) VALUES (?, ?, ?, ?)')
-    .bind(token, ct, file.size, await file.arrayBuffer()).run();
+  const token = await BlobStorage.put(env, ct, file.size, await file.arrayBuffer());
   return json({ ok: true, key: token, name: file.name || '', size: file.size });
 }
 
@@ -726,8 +738,7 @@ async function apiUpload(request, env, u) {
 // 注意：D1 运行时可能把 BLOB 读成普通 Array（非 Uint8Array），必须规范化再进 Response
 async function apiFileGet(request, env, token) {
   if (!validAttachToken(token)) return json({ error: '非法路径' }, 400);
-  const obj = await env.DB.prepare('SELECT mime, data FROM attachment_blobs WHERE token = ?')
-    .bind(token).first();
+  const obj = await BlobStorage.get(env, token);
   if (!obj) return json({ error: '文件不存在' }, 404);
   let d = obj.data;
   if (Array.isArray(d)) d = new Uint8Array(d);
@@ -914,7 +925,8 @@ async function apiExport(request, env, u) {
     const ph = ids.map(() => '?').join(',');
     const evs = (await env.DB.prepare(
       `SELECT req_id, detail FROM events
-       WHERE req_id IN (${ph}) AND action = 'comment' AND detail LIKE '【验收标准】%' ORDER BY id`)
+       WHERE req_id IN (${ph}) AND action = 'comment'
+         AND (ctype = 'ac' OR detail LIKE '【验收标准】%') ORDER BY id`)
       .bind(...ids).all()).results;
     for (const e of evs) {
       if (!acMap.has(e.req_id)) acMap.set(e.req_id, []);

@@ -463,6 +463,22 @@ def main():
                 s, d = jreq('DELETE', '/api/releases/%d' % rel2, cookie=cookie)
             s2, _h, _b = http('GET', '/testcases.html', headers={'Cookie': cookie})
             check('R5 用例页 200', s2 == 200)
+            # ---- R7：评论类型（普通/验收标准/测试用例）----
+            s, d = jreq('POST', '/api/requirements', {'project_id': dpid, 'title': '[verify] R7探针', 'type': 'req'}, cookie=cookie)
+            r7 = d.get('id')
+            if r7:
+                s, d = jreq('POST', '/api/requirements/%d/comment' % r7, {'text': '导出应含此条', 'ctype': 'ac'}, cookie=cookie)
+                s, d = jreq('POST', '/api/requirements/%d/comment' % r7, {'text': '步骤：打开登录页', 'ctype': 'testcase'}, cookie=cookie)
+                s, d = jreq('GET', '/api/requirements/%d' % r7, cookie=cookie)
+                cms = [e for e in d.get('events', []) if e.get('action') == 'comment']
+                check('R7 评论类型入库', len(cms) == 2 and {c.get('ctype') for c in cms} == {'ac', 'testcase'})
+                s2, _h, raw = http('GET', '/api/export?project=%d' % dpid, headers={'Cookie': cookie})
+                txt = raw.decode('utf-8-sig', errors='replace')
+                check('R7 导出验收标准汇总(ctype=ac口径)', '导出应含此条' in txt)
+                s, d = jreq('DELETE', '/api/requirements/%d' % r7, cookie=cookie)
+            else:
+                for nm in ('R7 评论类型入库', 'R7 导出验收标准汇总(ctype=ac口径)'):
+                    check(nm, False, 'r7 缺失')
         s, d = jreq('DELETE', '/api/projects/%d' % dpid, cookie=cookie)
         s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
         check('文档测试项目清理闭环', not any(p['id'] == dpid for p in d2.get('projects', [])))
