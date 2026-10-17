@@ -39,7 +39,7 @@
     <h3>新建用例</h3>
     <div class="fld-row"><label>项目</label><select id="n-proj" style="flex:1;padding:8px"></select></div>
     <div class="fld-row"><label>标题</label><input id="n-title" style="flex:1;padding:8px" maxlength="200"></div>
-    <div class="fld-row"><label>关联需求</label><input id="n-req" style="flex:1;padding:8px" placeholder="需求编号（选填，如 184）"></div>
+    <div class="fld-row"><label>关联需求</label><select id="n-req" style="flex:1;padding:8px"><option value="">不关联</option></select></div>
     <div class="fld-row"><label>风险级</label><select id="n-risk" style="flex:1;padding:8px">
       <option value="high">高</option><option value="middle" selected>中</option>
       <option value="low">低</option><option value="external">外部依赖</option></select></div>
@@ -81,7 +81,7 @@ async function init() {
   const want = SP.get('project');
   if (want && projects.some(p => String(p.id) === want)) { $('proj-sel').value = want; $('n-proj').value = want; }
   $('proj-sel').onchange = () => { closeDetail(); loadList(); };
-  $('btn-new-tc').onclick = () => { $('new-overlay').style.display = 'flex'; };
+  $('btn-new-tc').onclick = () => { $('new-overlay').style.display = 'flex'; refreshReqOptions(); };
   await loadList();
   // 抽屉↔用例库联动：?tc=<id> 从需求抽屉跳入时自动切项目并展开该用例
   const tcWanted = parseInt(SP.get('tc'), 10);
@@ -95,25 +95,52 @@ async function init() {
     }
   }
 }
-let me = null, releases = [];
+let me = null, releases = [], projectReqs = [];
+
+// 方案A：related_req 下拉选项（列本项目需求，减少手填错号）
+async function refreshReqOptions() {
+  const pid = $('n-proj').value || $('proj-sel').value;
+  if (!pid) { projectReqs = []; $('n-req').innerHTML = '<option value="">不关联</option>'; return; }
+  const d = await api('/api/requirements?project=' + pid + '&page_size=50');
+  projectReqs = (d && d.items) || [];
+  $('n-req').innerHTML = '<option value="">不关联</option>'
+    + projectReqs.map(q => `<option value="${q.id}">#${q.id} ${esc(q.title)}</option>`).join('');
+}
 
 async function loadList() {
   const pid = $('proj-sel').value;
   if (!pid) return;
   releases = (await api('/api/releases?project=' + pid)).items || [];
+  await refreshReqOptions();
   const r = await api('/api/testcases?project=' + pid);
   const items = (r && r.items) || [];
-  $('list').innerHTML = `<div class="tc-row" style="font-weight:700;background:#f4f4f8">
-      <span class="tc-code">编号</span><span style="flex:1">标题</span>
-      <span>风险</span><span>类型</span><span>状态</span><span>关联需求</span></div>`
-    + (items.length ? items.map(x => `
+  // 方案A：按关联需求分组（需求=用例集合的自然分组键）；未关联的归"未分组"排最后
+  const groups = new Map();
+  for (const x of items) {
+    const k = x.related_req ? String(x.related_req) : 'none';
+    if (!groups.has(k)) groups.set(k, { req_id: x.related_req, title: x.related_req_title || '', tcs: [] });
+    groups.get(k).tcs.push(x);
+  }
+  const ordered = [...groups.entries()].sort((a, b) => {
+    if (a[0] === 'none') return 1; if (b[0] === 'none') return -1;
+    return (parseInt(a[0], 10) || 0) - (parseInt(b[0], 10) || 0);
+  });
+  const tcRow = x => `
     <div class="tc-row" onclick="openTc(${x.id})">
       <span class="tc-code">${esc(x.tc_code)}</span>
       <span style="flex:1">${esc(x.title)}</span>
       <span>${RN[x.risk] || x.risk}</span><span>${CT[x.ctype] || x.ctype}</span>
       <span>${(TST[x.status] || TST.draft)[0]}</span>
-      <span class="sub" style="color:#888;font-size:12px">${x.related_req ? '#' + x.related_req : '—'}</span>
-    </div>`).join('') : '<div class="tc-row" style="color:#888">暂无用例，点右上角「＋ 新用例」创建</div>');
+    </div>`;
+  $('list').innerHTML = `<div class="tc-row" style="font-weight:700;background:#f4f4f8">
+      <span class="tc-code">编号</span><span style="flex:1">标题</span>
+      <span>风险</span><span>类型</span><span>状态</span></div>`
+    + (items.length ? ordered.map(([k, g]) => {
+        const head = k === 'none'
+          ? `<div class="tc-row" style="background:#fbfbfd;font-weight:600;color:#666">📦 未分组（尚未关联需求）· ${g.tcs.length} 条</div>`
+          : `<div class="tc-row" style="background:#fbfbfd;font-weight:600">📦 <a href="/index.html?project=${pid}&req=${k}" style="color:#4f46e5">#${k}</a> ${esc(g.title)} · ${g.tcs.length} 条</div>`;
+        return head + g.tcs.map(tcRow).join('');
+      }).join('') : '<div class="tc-row" style="color:#888">暂无用例，点右上角「＋ 新用例」创建</div>');
 }
 
 function closeDetail() { $('detail').classList.remove('open'); $('detail').innerHTML = ''; }
@@ -146,7 +173,10 @@ async function openTc(id) {
           ${['high','middle','low','external'].map(k => `<option value="${k}" ${t.risk===k?'selected':''}>${RN[k]}</option>`).join('')}</select></label>
         <label class="fld"><span>类型</span><select id="t-ctype">
           ${['positive','negative','boundary'].map(k => `<option value="${k}" ${t.ctype===k?'selected':''}>${CT[k]}</option>`).join('')}</select></label>
-        <label class="fld"><span>关联需求</span><input id="t-req" value="${t.related_req || ''}" style="width:100px;padding:8px"></label>
+        <label class="fld" style="flex:1"><span>关联需求</span><select id="t-req" style="width:100%;padding:8px">
+          <option value="">不关联</option>
+          ${projectReqs.map(q => `<option value="${q.id}" ${t.related_req===q.id?'selected':''}>#${q.id} ${esc(q.title)}</option>`).join('')}
+        </select></label>
       </div>
       <textarea id="t-steps" rows="10" class="mono">${esc(d.steps_md)}</textarea>
       <input id="t-summary" placeholder="修订摘要（选填）" style="padding:8px">
@@ -227,6 +257,7 @@ $('n-save').onclick = async () => {
   if (r && r.ok) { closeNew(); $('proj-sel').value = $('n-proj').value; loadList(); }
   else { $('n-err').textContent = (r && r.error) || '创建失败'; $('n-err').style.display = 'block'; }
 };
+$('n-proj').addEventListener('change', refreshReqOptions);
 init();
 </script>
 </body>
