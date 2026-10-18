@@ -164,9 +164,11 @@
     renderNrThumbs(ov);
   });
   function renderNrThumbs(ov) {
-    ov.querySelector('#nr-thumbs').innerHTML = ov.__files.map((f, i) =>
+    const box = ov.querySelector('#nr-thumbs');
+    if (!box) return;
+    box.innerHTML = ov.__files.map((f, i) =>
       '<div style="text-align:center"><img class="thumb" src="' + f._url + '">'
-      + '<div class="sub" style="font-size:11px;cursor:pointer" data-i="' + i + '">移除</div></div>').join('');
+      + '<div class="sub" style="font-size:11px;cursor:pointer" id="nr-thumbs-remove" data-i="' + i + '">移除</div></div>').join('');
   }
 
   UI.openNewReqModal = function (projectId, onCreated) {
@@ -175,8 +177,80 @@
     const ov = document.createElement('div');
     ov.className = 'modal-overlay'; ov.id = 'nr-overlay'; ov.style.zIndex = 90;
     ov.__files = [];
-    ov.innerHTML = '<div class="modal" style="width:min(640px,94vw);max-height:92vh;overflow:auto">'
-      + '<h3>＋ 新需求</h3>'
+    // 全部交互走事件委托：绑定时机与元素缺失都不影响取消/遮罩/提交
+    ov.addEventListener('click', async e => {
+      const t = e.target;
+      if (t === ov || t.id === 'nr-cancel') { ov.remove(); return; }
+      if (t.id === 'nr-pick') { const f = ov.querySelector('#nr-files'); if (f) f.click(); return; }
+      if (t.id === 'nr-thumbs-remove') {
+        const i = parseInt(t.dataset.i, 10);
+        ov.__files.splice(i, 1);
+        renderNrThumbs(ov);
+        return;
+      }
+      if (t.id !== 'nr-submit') return;
+      // ---- 提交 ----
+      const err = ov.querySelector('#nr-err');
+      err.textContent = '';
+      const title = ov.querySelector('#nr-title').value.trim();
+      if (!title) { err.textContent = '标题必填'; return; }
+      if (!ov.querySelector('#nr-project').value) { err.textContent = '请选择研发项目'; return; }
+      const isBug = ov.querySelector('#nr-type').value === 'bug';
+      if (isBug && ['general', 'watch'].includes(ov.querySelector('#nr-severity').value)) {
+        const okg = confirm('涉及权限、稽查轨迹、编号唯一性、数据更正留痕的问题，级别最低应定为「重大」。\n确认以当前级别提交吗？');
+        if (!okg) return;
+      }
+      t.disabled = true;
+      try {
+        if (!window.__nrToken) window.__nrToken = crypto.randomUUID();
+        const attachments = [];
+        for (const f of ov.__files) {
+          const fd = new FormData();
+          fd.append('file', f);
+          const up = await api('/api/upload', { method: 'POST', body: fd });
+          if (!up.ok) throw new Error(up.error || '上传失败');
+          attachments.push({ key: up.key, name: up.name, size: up.size });
+        }
+        const tags = ov.querySelector('#nr-tags').value.split(/[,，]/).map(x => x.trim()).filter(Boolean);
+        const d = await api('/api/requirements', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            project_id: parseInt(ov.querySelector('#nr-project').value, 10), title,
+            severity: isBug ? ov.querySelector('#nr-severity').value : '',
+            root_cause: isBug ? ov.querySelector('#nr-root-cause').value : '',
+            ref_code: isBug ? ov.querySelector('#nr-ref').value.trim() : '',
+            description: ov.querySelector('#nr-desc').value, type: ov.querySelector('#nr-type').value,
+            urgency: ov.querySelector('#nr-urgency').value, tags, attachments,
+            client_token: window.__nrToken
+          }) });
+        if (d.ok) {
+          const createdId = d.id;
+          window.__nrToken = null;
+          ov.remove();
+          if (UI.onReqCreated) UI.onReqCreated(createdId);
+          return;
+        }
+        err.textContent = d.error || '提交失败';
+      } catch (ex) { err.textContent = ex.message || '网络错误'; }
+      t.disabled = false;
+    });
+    ov.addEventListener('paste', async e => {
+      const items = (e.clipboardData || {}).items || [];
+      const imgs = [...items].filter(it => it.type && it.type.startsWith('image/'));
+      if (!imgs.length) return;
+      e.preventDefault();
+      for (const it of imgs) {
+        if (ov.__files.length >= 3) { alert('最多 3 张'); break; }
+        const f = it.getAsFile();
+        if (!f) continue;
+        const named = new File([f], 'paste-' + Date.now() + '.png', { type: f.type || 'image/png' });
+        const c = await compressImage(named);
+        c._url = URL.createObjectURL(c);
+        ov.__files.push(c);
+      }
+      renderNrThumbs(ov);
+    });
+    ov.innerHTML = '<div class="modal" style="width:min(640px,94vw);max-height:92vh;overflow:auto;position:relative">'
+      + '<h3 style="margin:0 0 10px">＋ 新需求</h3>'
       + '<div class="fld-row">'
       + '<label class="fld" style="min-width:170px"><span>研发项目 *</span><select id="nr-project"></select></label>'
       + '<label class="fld" style="min-width:130px"><span>类型</span><select id="nr-type">'
@@ -203,91 +277,16 @@
       + '<div id="nr-thumbs" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"></div></div>'
       + '<div class="err" id="nr-err" style="margin:6px 0 0"></div>'
       + '<div class="modal-btns" style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">'
-      + '<button class="btn" id="nr-cancel">取消</button>'
+      + '<button class="btn" id="nr-cancel">取 消</button>'
       + '<button class="btn primary" id="nr-submit">提 交</button></div></div>';
     document.body.appendChild(ov);
-
-    const $ = sel => ov.querySelector(sel);
-    ov.__files = [];
-    const close = () => closeOverlay('nr-overlay');
-
-    // 项目下拉：全局上下文优先，无则传入值
+    const gp = UI.getProject() || String(projectId || '');
     api('/api/projects').then(d => {
       const projects = (d && d.projects) || [];
-      const gp = UI.getProject() || String(projectId || '');
-      $('nr-project').innerHTML = projects.map(x => '<option value="' + x.id + '"' + (String(x.id) === gp ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('');
+      const sel = ov.querySelector('#nr-project');
+      if (!sel) return;
+      sel.innerHTML = projects.map(x => '<option value="' + x.id + '"' + (String(x.id) === gp ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('');
     });
-    // 类型切换：bug 字段
-    $('nr-type').addEventListener('change', () => {
-      $('nr-bug-fields').style.display = $('nr-type').value === 'bug' ? '' : 'none';
-    });
-    // 文件选择
-    $('nr-files').addEventListener('change', async e => {
-      for (const f of e.target.files) {
-        if (ov.__files.length >= 3) { alert('最多 3 张'); break; }
-        const c = await compressImage(f);
-        c._url = URL.createObjectURL(c);
-        ov.__files.push(c);
-      }
-      e.target.value = '';
-      renderNrThumbs(ov);
-    });
-    // 缩略图移除
-    $('nr-thumbs').addEventListener('click', e => {
-      const i = e.target.dataset && e.target.dataset.i;
-      if (i !== undefined) { ov.__files.splice(parseInt(i, 10), 1); renderNrThumbs(ov); }
-    });
-    // 关闭与全部按钮：事件委托（元素缺失也不影响取消）
-    ov.addEventListener('click', e => {
-      if (e.target === ov || e.target.id === 'nr-cancel') { close(); return; }
-      if (e.target.id === 'nr-pick') $('nr-files').click();
-    });
-    // 提交（幂等 token）
-    $('nr-submit').onclick = async () => {
-      const err = $('nr-err');
-      err.textContent = '';
-      const title = $('nr-title').value.trim();
-      if (!title) { err.textContent = '标题必填'; return; }
-      if (!$('nr-project').value) { err.textContent = '请选择研发项目'; return; }
-      const isBug = $('nr-type').value === 'bug';
-      if (isBug && ['general', 'watch'].includes($('nr-severity').value)) {
-        const okg = confirm('涉及权限、稽查轨迹、编号唯一性、数据更正留痕的问题，级别最低应定为「重大」。\n确认以当前级别提交吗？');
-        if (!okg) return;
-      }
-      $('nr-submit').disabled = true;
-      try {
-        if (!window.__nrToken) window.__nrToken = crypto.randomUUID();
-        const attachments = [];
-        for (const f of ov.__files) {
-          const fd = new FormData();
-          fd.append('file', f);
-          const up = await api('/api/upload', { method: 'POST', body: fd });
-          if (!up.ok) throw new Error(up.error || '上传失败');
-          attachments.push({ key: up.key, name: up.name, size: up.size });
-        }
-        const tags = $('nr-tags').value.split(/[,，]/).map(x => x.trim()).filter(Boolean);
-        const d = await api('/api/requirements', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            project_id: parseInt($('nr-project').value, 10), title,
-            severity: isBug ? $('nr-severity').value : '',
-            root_cause: isBug ? $('nr-root-cause').value : '',
-            ref_code: isBug ? $('nr-ref').value.trim() : '',
-            description: $('nr-desc').value, type: $('nr-type').value,
-            urgency: $('nr-urgency').value, tags, attachments,
-            client_token: window.__nrToken
-          }) });
-        if (d.ok) {
-          const createdId = d.id;
-          window.__nrToken = null;
-          close();
-          if (UI.onReqCreated) UI.onReqCreated(createdId);
-          return;
-        }
-        err.textContent = d.error || '提交失败';
-      } catch (e) { err.textContent = e.message || '网络错误'; }
-      $('nr-submit').disabled = false;
-    };
-    $('nr-title').focus();
   };
 
   window.PoolUI = UI;
