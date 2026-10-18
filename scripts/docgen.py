@@ -6,6 +6,8 @@
   csv14   --project 3 --out DIR      CSV-14 问题登记与定期审查表（bug/需求台账+五维度统计）
   report  --project 3 --release 1 --out DIR   版本测试报告（执行记录+统计+用例全文）
   rtm     --project 3 --out DIR      需求追溯矩阵片段（需求↔用例双向）
+  export  --project 3 --out DIR      项目全量上下文数据包（JSON：需求含评论/releases/用例含步骤/
+                                     执行记录/文档清单/统计——agent 拿数据包+模板骨架构建任意个性化文档）
 
 输出 md 文件落 DIR（默认 projects/cf-story-pool/reports/），供润色/归档/转 docx。
 凭据从 .secrets/story_pool_pass_xiao_custom 读取，不回显。
@@ -185,9 +187,83 @@ def gen_rtm(s, pid, out):
     print('生成', path, '（需求 %d / 用例 %d）' % (len(reqs), len(tcs)))
 
 
+def gen_export(s, pid, out):
+    """项目全量上下文数据包（JSON）：需求含评论/releases/用例含步骤全文/执行记录/文档清单/统计。"""
+    def safe(fn_, default):
+        try:
+            return fn_()
+        except Exception as e:
+            print('  warn:', type(e).__name__)
+            return default
+
+    # 需求全量（列表+逐条评论全文）
+    reqs = fetch(s, '/api/requirements?project=%d&page_size=50' % pid).get('items', [])
+    reqs_full = []
+    for x in reqs:
+        d = safe(lambda x=x: fetch(s, '/api/requirements/%d' % x['id']), {})
+        req = d.get('req', x)
+        reqs_full.append({
+            'id': req.get('id', x['id']), 'title': req.get('title'), 'type': req.get('type'),
+            'status': req.get('status'), 'severity': req.get('severity', ''),
+            'root_cause': req.get('root_cause', ''), 'ref_code': req.get('ref_code', ''),
+            'release_id': req.get('release_id'), 'description': req.get('description', ''),
+            'tags': d.get('tags', []), 'comments': [
+                {'actor': e.get('actor_name'), 'ctype': e.get('ctype', 'normal'),
+                 'text': e.get('detail'), 'at': e.get('created_at')}
+                for e in d.get('events', []) if e.get('action') == 'comment'],
+        })
+        print('  req #%d' % req.get('id', x['id']))
+    # releases + 执行记录
+    rels = fetch(s, '/api/releases?project=%d' % pid).get('items', [])
+    for rl in rels:
+        ex = safe(lambda rl=rl: s.get(BASE + '/api/releases/%d/executions' % rl['id']).json(), {})
+        rl['executions'] = ex.get('items', [])
+        rl['stat'] = ex.get('stat', {})
+    # 用例全量（含步骤全文+版本+执行）
+    tcs = fetch(s, '/api/testcases?project=%d' % pid).get('items', [])
+    tcs_full = []
+    for x in tcs:
+        d = safe(lambda x=x: s.get(BASE + '/api/testcases/%d' % x['id']).json(), {})
+        if d.get('ok'):
+            tcs_full.append({**d['tc'], 'steps_md': d.get('steps_md', ''),
+                             'versions': d.get('versions', []), 'executions': d.get('executions', [])})
+            print('  tc %s' % x['tc_code'])
+        else:
+            tcs_full.append({'tc_code': x['tc_code'], 'title': x['title'], '_error': True})
+    # 文档清单（含当前内容+版本）
+    docs = fetch(s, '/api/docs?project_id=%d' % pid).get('items', [])
+    docs_full = []
+    for x in docs:
+        d = safe(lambda x=x: s.get(BASE + '/api/docs/%d' % x['id']).json(), {})
+        if d.get('ok'):
+            docs_full.append({**d['doc'], 'content_md': d.get('content_md', ''),
+                              'versions': d.get('versions', [])})
+            print('  doc #%d' % x['id'])
+    # 组装
+    pkg = {
+        'exported_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        'project': {'id': pid},
+        'requirements': reqs_full,
+        'releases': rels,
+        'testcases': tcs_full,
+        'docs': docs_full,
+        'stats': {
+            'requirements': len(reqs_full),
+            'releases': len(rels),
+            'testcases': len(tcs_full),
+            'docs': len(docs_full),
+        },
+    }
+    path = os.path.join(out, '项目数据包-story-pool-%s.json' % time.strftime('%Y%m%d'))
+    with open(path, 'w') as f:
+        json.dump(pkg, f, ensure_ascii=False, indent=1)
+    size = os.path.getsize(path)
+    print('生成', path, '（%d 条需求 / %d 版本 / %d 用例 / %d 文档，%.0f KB）' % (
+        len(reqs_full), len(rels), len(tcs_full), len(docs_full), size / 1024))
+
 def main():
     a = sys.argv[1:]
-    if not a or a[0] not in ('csv14', 'report', 'rtm'):
+    if not a or a[0] not in ('csv14', 'report', 'rtm', 'export'):
         print(__doc__)
         raise SystemExit(1)
     cmd = a[0]
@@ -205,6 +281,8 @@ def main():
         gen_report(s, pid, rel, out)
     elif cmd == 'rtm':
         gen_rtm(s, pid, out)
+    elif cmd == 'export':
+        gen_export(s, pid, out)
 
 
 if __name__ == '__main__':

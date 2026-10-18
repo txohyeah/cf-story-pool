@@ -1,0 +1,3334 @@
+{
+ "exported_at": "2026-10-18T22:19:05",
+ "project": {
+  "id": 3
+ },
+ "requirements": [
+  {
+   "id": 183,
+   "title": "文档页：项目内 md+版本快照+评论绑版本+三态流转",
+   "type": "req",
+   "status": "closed",
+   "severity": "",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": 1,
+   "description": "【背景】评审协同需要项目内长文档承载与逐版本讨论，替代 md/word 发来发去。\n【现状】已上线（commit a0b25ad）：docs/doc_versions/doc_comments 三表、本地 marked+DOMPurify 渲染、图片上传走压缩管线存 D1 BLOB。\n【验收要点】文档 CRUD+版本快照链+评论绑版本号+草稿/评审中/已批准三态；批准后再编辑自动回草稿。",
+   "tags": [
+    {
+     "id": 1,
+     "name": "AI整理"
+    },
+    {
+     "id": 24,
+     "name": "v1.0"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "【验收标准】\n1. 文档 CRUD 与版本快照：每次保存生成新版本+修订摘要，历史版本可回看\n2. 评论自动绑定当前查看版本\n3. 三态流转：草稿→评审中→已批准（批准人+日期落库）；批准后编辑回草稿\n4. verify_live 文档断言 12 项全绿（实际 53/53）\n5. 已实际使用：评审文档 id=1 走完 v1→v4+批准全流程",
+     "at": "2026-10-17 11:20:37"
+    }
+   ]
+  },
+  {
+   "id": 184,
+   "title": "筛选导出：四维筛选+五维度统计 CSV",
+   "type": "req",
+   "status": "closed",
+   "severity": "",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": 1,
+   "description": "【背景】检查出示、月度运营例会、喂 CSV-14 台账与 RTM 取数，都需要结构化导出（CSV-14 五维度统计口径；\"导出件优先\"证据纪律）。\n【现状】无导出功能。\n【验收要点】worker 端筛选导出 CSV；纯查询不改数据。",
+   "tags": [
+    {
+     "id": 1,
+     "name": "AI整理"
+    },
+    {
+     "id": 24,
+     "name": "v1.0"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "【验收标准】\n1. 按 项目+标签+状态+类型 四维筛选导出 CSV（UTF-8 BOM，Excel 直接打开不乱码）\n2. 导出列：编号/标题/类型/状态/紧急度/severity/根因/提单人/日期/ref_code/验收标准汇总\n3. 五维度统计（来源/级别/根因分类/业务域/状态）数字与同筛选条件的列表结果一致\n4. 仅登录用户可导出（门禁内）\n5. 按版本（release）筛选导出可用",
+     "at": "2026-10-17 11:20:38"
+    },
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "开发完成并部署上线：/api/export 筛选导出 CSV（UTF-8 BOM、验收标准汇总列、五维度统计汇总区），前端「⬇ 导出」按钮按当前筛选下载。verify 断言全绿（首跑 FAIL 系断言自身 bug：utf-8-sig 解码剥 BOM，已修正断言）。开发=agent（韩立），验收=自动化断言（模拟验证留痕）",
+     "at": "2026-10-17 11:42:06"
+    }
+   ]
+  },
+  {
+   "id": 185,
+   "title": "单据字段增强：severity 四级+root_cause+ref_code 编号互指",
+   "type": "req",
+   "status": "closed",
+   "severity": "",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": 1,
+   "description": "【背景】CSV-14 台账要求分级/根因分类/关联号；ISS↔CR 互指纪律防\"只在单据里写已修复而不留变更轨迹\"。\n【现状】requirements 无 severity/root_cause/ref_code 字段；type 已支持 bug。\n【验收要点】schema ALTER+表单/详情/列表全链路；存量数据不受影响。",
+   "tags": [
+    {
+     "id": 1,
+     "name": "AI整理"
+    },
+    {
+     "id": 24,
+     "name": "v1.0"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "【验收标准】\n1. severity 四级（关键/重大/一般/观察）可填可筛；涉及权限/稽查轨迹/编号唯一性/数据更正留痕的 bug 单，保存时前端提示\"最低重大\"\n2. root_cause 六分类（配置/缺陷/使用/外部依赖/数据/需求有误）可填\n3. ref_code 可填合规编号（ISS-2026-001 等），搜索框编号直达同时匹配 ref_code\n4. related_codes 关联号列表（DEV/CR/TC/EV 互指）\n5. 存量 151+ 条数据零影响（字段可空）",
+     "at": "2026-10-17 11:20:39"
+    },
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "开发完成并部署上线：severity四级/root_cause六分类/ref_code互指全链路（建单/编辑/详情/列表筛选/编号直达）；verify 新增 8 断言全绿（60/60）。开发=agent（韩立），验收=自动化断言（模拟验证留痕：verify 探针单据已清理）",
+     "at": "2026-10-17 11:42:05"
+    }
+   ]
+  },
+  {
+   "id": 186,
+   "title": "releases 版本发布单：CR-V 承载+状态机",
+   "type": "req",
+   "status": "closed",
+   "severity": "",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": 1,
+   "description": "【背景】每版发布=一次 CR-V 变更（CSV-13），回归范围与发布确认需要载体；导出与追溯的高频维度。\n【现状】无版本发布实体。\n【验收要点】releases 轻表+状态机+与 bug 单关联。",
+   "tags": [
+    {
+     "id": 1,
+     "name": "AI整理"
+    },
+    {
+     "id": 24,
+     "name": "v1.0"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "【验收标准】\n1. 建 release（version/change_scope/retest_scope）→关联 bug 单→发布确认→关闭闭环\n2. 发布确认人≠实施人（校验）\n3. 状态机：规划中/测试中/待再验证/已发布/已关闭\n4. 按 release 筛选关联需求与 bug 清单\n5. 修复的 bug 关联 release 后复测通过方可随版关闭",
+     "at": "2026-10-17 11:20:41"
+    },
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "开发完成并部署：releases 轻表+五态状态机+发布确认人≠实施人校验+bug关联（releases.html「🔗 关联 bug」）；verify 5 断言全绿（含拦截负向用例）。开发=agent，验收=自动化断言（模拟验证留痕）",
+     "at": "2026-10-17 12:10:01"
+    }
+   ]
+  },
+  {
+   "id": 187,
+   "title": "用例库 test_cases：全文+关联需求+批准冻结+版本快照",
+   "type": "req",
+   "status": "closed",
+   "severity": "",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": 1,
+   "description": "【背景】评审定案（决策点3修订）：用例全文进 pool，\"按版本选需求→导出用例全文\"需要结构化映射；TC 编号一经分配不复用（CTMS 纪律）。\n【现状】无用例实体；用例全文计划在 CSV 文档。\n【验收要点】test_cases 表+与需求/版本三方关联。",
+   "tags": [
+    {
+     "id": 1,
+     "name": "AI整理"
+    },
+    {
+     "id": 24,
+     "name": "v1.0"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "【验收标准】\n1. 用例 CRUD：tc_code（TC- 前缀唯一不复用）/title/steps_md（前置+步骤+预期）/related_req/risk（高/中/低/外部依赖）/type（正向/负向/边界）\n2. status draft→approved；approved 后编辑自动回 draft+新版本快照（同 docs 机制）\n3. 需求详情页可互查关联用例\n4. 用例全文单条 1-2KB，总量<1MB，D1 BLOB/TEXT 容量无压力",
+     "at": "2026-10-17 11:20:42"
+    },
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "开发完成并部署：test_cases（TC- 编号自动生成不复用/steps_md/related_req/risk/ctype）+版本快照+draft→approved 冻结+批准后编辑回草稿；testcases.html 列表/详情/编辑。verify 断言全绿。开发=agent，验收=自动化断言（模拟验证留痕）",
+     "at": "2026-10-17 12:10:04"
+    }
+   ]
+  },
+  {
+   "id": 188,
+   "title": "用例执行记录：挂 releases+按版本出清单与统计",
+   "type": "req",
+   "status": "closed",
+   "severity": "",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": 1,
+   "description": "【背景】执行记录（结论/偏差号/证据号）是纯数据，挂 releases 才能支撑\"版本测试报告\"统计数字直接从 pool 出。\n【现状】无。\n【验收要点】与 R5 同批表设计，独立验收。",
+   "tags": [
+    {
+     "id": 1,
+     "name": "AI整理"
+    },
+    {
+     "id": 24,
+     "name": "v1.0"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "【验收标准】\n1. 执行记录：tc_id+release_id+result（通过/未通过/偏差）+conclusion+DEV 号+EV 号\n2. 按 release 出执行清单；通过/未通过/偏差数自动统计\n3. 失败记录原结果保留（重跑通过另开新记录，不覆盖）——CSV 纪律对齐",
+     "at": "2026-10-17 11:20:43"
+    },
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "开发完成并部署：tc_executions 挂 releases（tc+release 唯一 upsert）、按版本执行清单+通过/未通过/偏差统计；失败记录原结果保留不覆盖（CSV 纪律对齐）。verify 断言全绿。开发=agent，验收=自动化断言（模拟验证留痕）",
+     "at": "2026-10-17 12:10:08"
+    }
+   ]
+  },
+  {
+   "id": 189,
+   "title": "评论类型：普通/验收标准/测试用例三档",
+   "type": "req",
+   "status": "closed",
+   "severity": "",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": 1,
+   "description": "【背景】HiFox 评估定案（2026-10-17 拍板）：验收标准以评论类型承载，过程可追溯、一单多标、改动面小。\n【现状】需求评论无类型区分。\n【验收要点】只动需求单评论；doc_comments（文档评论）保持绑版本语义不加类型。",
+   "tags": [
+    {
+     "id": 1,
+     "name": "AI整理"
+    },
+    {
+     "id": 24,
+     "name": "v1.0"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "【验收标准】\n1. 评论可标类型：普通（默认）/验收标准/测试用例\n2. 徽标显示+按类型过滤\n3. 导出时验收标准汇总成列（与 R2 联动）\n4. 枚举可扩展",
+     "at": "2026-10-17 11:20:44"
+    },
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "开发完成并部署：评论三档类型（normal/ac/testcase）入库+徽标+只看类型过滤+导出时验收标准汇总成列（ctype=ac 口径，兼容旧【验收标准】前缀）；doc_comments 未动。verify 断言全绿。开发=agent，验收=自动化断言（模拟验证留痕）。注：既有 #183-192 的【验收标准】前缀评论已按兼容口径被导出识别，无需迁移",
+     "at": "2026-10-17 12:10:09"
+    }
+   ]
+  },
+  {
+   "id": 190,
+   "title": "docgen 脚本+15 件套模板入库",
+   "type": "req",
+   "status": "closed",
+   "severity": "",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": 2,
+   "description": "【背景】pool 管\"活台账\"，CSV 文档是\"定格证据\"——生成能力固化=从 pool 取数填充模板产出文档草稿（CTMS 15 件套为骨架）。\n【现状】无生成脚本；模板在工作区散放。\n【验收要点】scripts/docgen.py+templates/csv/ 入库（git 仓库），不进 D1。",
+   "tags": [
+    {
+     "id": 1,
+     "name": "AI整理"
+    },
+    {
+     "id": 25,
+     "name": "v1.1"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "【验收标准】\n1. 从 pool API 取数→填充模板→产出：CSV-14 问题登记表/版本测试报告草稿/RTM 片段（md）\n2. 生成物字段与 pool 数据逐项一致（抽样核对）\n3. 测试报告内嵌用例全文+执行结果\n4. CTMS 15 件套 md 模板入库\n5. 换项目参数（如 oncology）可复用",
+     "at": "2026-10-17 11:20:46"
+    },
+    {
+     "actor": "助理",
+     "ctype": "normal",
+     "text": "开发完成：scripts/docgen.py 三生成器（csv14 问题登记表/report 版本测试报告含用例全文/rtm 需求追溯）+templates/csv/ 15 件套模板入库；实测生成 v1.0 三件（reports/ 归档），报告数据与 release v1.0 执行统计一致（25/25/0/0）。开发=agent，验收=生成物实测（模拟验证留痕）",
+     "at": "2026-10-17 15:25:24"
+    }
+   ]
+  },
+  {
+   "id": 191,
+   "title": "定期审查留痕：月度运营例会输入件+结论",
+   "type": "req",
+   "status": "closed",
+   "severity": "",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": 2,
+   "description": "【背景】CSV-14 四类定期审查（月度运营/季度权限/半年抽检/年度回顾）要求审查留痕可追溯；GCP 53(四)定期审查。\n【现状】无审查留痕机制。\n【验收要点】轻量：复用单据+评论+标签，不新建实体。",
+   "tags": [
+    {
+     "id": 1,
+     "name": "AI整理"
+    },
+    {
+     "id": 25,
+     "name": "v1.1"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "【验收标准】\n1. 月度审查流程：导出当月清单→审查结论以评论+标签（月度审查-YYYYMM）留痕\n2. 审查记录按标签可检索\n3. 输入件完整性检查（对账脚本未中途抛错）纳入流程",
+     "at": "2026-10-17 11:20:47"
+    },
+    {
+     "actor": "助理",
+     "ctype": "normal",
+     "text": "开发完成：月度审查 SOP 已发文档页 id=3（评审中）+输入件脚本（docgen csv14+blob_stats）+结论留痕三件（评论/标签/纪要）。SOP 待晓批准后本单转 verified。开发=agent（模拟验证留痕）",
+     "at": "2026-10-17 15:25:27"
+    },
+    {
+     "actor": "助理",
+     "ctype": "normal",
+     "text": "SOP 文档页 id=3 已由晓批准（2026-10-18），交付完整（SOP+输入件脚本+留痕三件约定），转 verified",
+     "at": "2026-10-18 12:11:15"
+    }
+   ]
+  },
+  {
+   "id": 192,
+   "title": "图片存储治理：storage 抽象层+体积月度统计",
+   "type": "req",
+   "status": "closed",
+   "severity": "",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": 1,
+   "description": "【背景】图片定案（2026-10-17）：延续 D1 BLOB+治理三招（storage 抽象可换后端/强制压缩管线/月度体积统计超 3GB 触发迁移评估）。压缩管线与 BLOB 读写已随文档页上线，但直连表无抽象层。\n【现状】apiUpload/apiFileGet 直连 attachment_blobs；无体积统计产出。\n【验收要点】读写收口+统计输出。",
+   "tags": [
+    {
+     "id": 1,
+     "name": "AI整理"
+    },
+    {
+     "id": 24,
+     "name": "v1.0"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "【验收标准】\n1. 图片读写收口 storage 模块：换后端（OSS/R2）URL 与调用方不变\n2. 月度体积统计脚本：BLOB 总量/数量输出（月度例会输入件）\n3. 超 3GB 告警逻辑\n4. 压缩管线保持强制（>300KB 自动压缩）",
+     "at": "2026-10-17 11:20:48"
+    },
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "开发完成并部署：BlobStorage 抽象层（apiUpload/apiFileGet 收口，换后端调用方与 URL 不变）+ scripts/blob_stats.py 月度体积统计（3GB 阈值告警 exit 1，本轮实测 0 BLOB/0.00GB）；压缩管线维持强制。verify 全绿。开发=agent，验收=自动化断言+统计脚本实测（模拟验证留痕）",
+     "at": "2026-10-17 12:10:12"
+    }
+   ]
+  },
+  {
+   "id": 195,
+   "title": "需求状态显示为已验证，但是编辑的时候没有对应的这个状态。现在默认是待确认。",
+   "type": "bug",
+   "status": "closed",
+   "severity": "general",
+   "root_cause": "defect",
+   "ref_code": "",
+   "release_id": 2,
+   "description": "历史bug 在 v1.1 中修复吧",
+   "tags": [
+    {
+     "id": 25,
+     "name": "v1.1"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "ac",
+     "text": "【验收标准】\n1. 状态流转\"移动到\"下拉首项为禁用的当前状态占位（如\"当前：已验证\"），打开即可见当前状态\n2. 选择目标状态提交流转功能不变\n3. 编辑卡片可见当前状态徽章（或等效提示）\n4. 需求实际状态数据不受影响（纯显示层修复）",
+     "at": "2026-10-18 01:50:38"
+    },
+    {
+     "actor": "助理",
+     "ctype": "normal",
+     "text": "修复已上线（流转下拉当前态占位+编辑卡片状态显示），待责任方页面验收后关闭",
+     "at": "2026-10-18 02:20:47"
+    },
+    {
+     "actor": "助理",
+     "ctype": "normal",
+     "text": "用户页面验收确认（状态下拉当前态占位+编辑卡片状态显示正常），转 verified",
+     "at": "2026-10-18 12:11:18"
+    }
+   ]
+  },
+  {
+   "id": 196,
+   "title": "项目删除级联修复：清理 releases/test_cases/docs 引用",
+   "type": "bug",
+   "status": "closed",
+   "severity": "major",
+   "root_cause": "defect",
+   "ref_code": "ISS-2026-001",
+   "release_id": 2,
+   "description": "【背景】v1.0 新增 releases/test_cases 等表后，apiProjectDelete 未级联清理其引用，建过版本/用例的项目因外键永远无法删除（[verify] 文档项目 id=4 残留实证；v1.0 版本测试报告\"已知问题\"建议 v1.1 修复并纳入回归）。\n【现状】apiProjectDelete 仅清理需求关联数据，保留\"有需求禁删\"保护；docs/releases/test_cases 的引用未级联。\n【验收要点】需求=0 的项目可删除且级联清理全部关联数据；有需求的项目仍禁删（保护保留）；verify 断言覆盖。",
+   "tags": [
+    {
+     "id": 1,
+     "name": "AI整理"
+    },
+    {
+     "id": 25,
+     "name": "v1.1"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "助理",
+     "ctype": "normal",
+     "text": "开发完成并部署：apiProjectDelete 级联清理 docs/doc_versions/doc_comments/test_cases/test_case_versions/tc_executions/releases/attachment_blobs（保留\"有需求禁删\"保护）；verify 新增\"#196 级联删除（含doc/release/tc项目）\"断言 PASS；残留 [verify] 文档项目已借级联修复清理。开发=agent，验收=自动化断言（模拟验证留痕）",
+     "at": "2026-10-17 15:25:10"
+    }
+   ]
+  },
+  {
+   "id": 197,
+   "title": "一些页面调整能用弹框的就别用页面跳转",
+   "type": "opt",
+   "status": "closed",
+   "severity": "",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": 2,
+   "description": "比如新增需求的页面，完全可以用一个弹框来表示。其他的一些也需要你检查下。\n注意：弹框不是浏览器自带的 alert，而是我们页面中的弹框。",
+   "tags": [
+    {
+     "id": 25,
+     "name": "v1.1"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "ac",
+     "text": "【验收标准】\n1. releases 页「关联 bug」由原生 prompt 改为 modal 弹框（输入编号，校验存在性后关联）\n2. docs 页「改密码」当页 modal（不再跳转需求列表页）\n3. 删除确认（需求/文档/用例/版本）由原生 confirm 统一为样式化 modal 二次确认\n4. 提单成功后跳详情页保留（语义合理不弹框）\n5. 全部弹框可 Esc/遮罩关闭，样式与现有 modal 一致",
+     "at": "2026-10-18 01:50:37"
+    },
+    {
+     "actor": "晓",
+     "ctype": "ac",
+     "text": "【验收标准】\n1. releases 页「关联 bug」由原生 prompt 改为 modal 弹框（输入编号，校验存在性后关联）✅\n2. docs 页「改密码」当页 modal（不再跳转需求列表页）✅\n3. 删除确认（需求/文档/用例）由原生 confirm 统一为样式化 modal——**延后至下一批**（涉及回调重构，本轮收缩范围保质量）\n4. 提单成功后跳详情页保留（语义合理不弹框）✅\n5. 全部弹框可 Esc/遮罩关闭，样式与现有 modal 一致 ✅\n\n另：本轮同批立单「提单接口幂等键」（见池内 opt 单），删除确认 modal 化与幂等键同批开发。",
+     "at": "2026-10-18 01:54:48"
+    },
+    {
+     "actor": "助理",
+     "ctype": "ac",
+     "text": "开发完成并部署：提单弹框化（index「＋ 新需求」弹框承载 new.html 全功能 iframe+postMessage 联动，embed 模式隐藏顶栏）+第一批弹框化（关联 bug modal/改密码当页）；验收标准第 3 条（删除确认统一 modal）延后下批已标注。用例 TC-050 起草。开发=agent（模拟验证留痕）",
+     "at": "2026-10-18 02:16:30"
+    },
+    {
+     "actor": "晓",
+     "ctype": "ac",
+     "text": "【验收标准】补充：\n6. 提单支持截图直接 Command/Ctrl+V 粘贴上传（剪贴板图片自动进压缩管线，>300KB 自动压缩；最多 3 张上限与手动上传一致）",
+     "at": "2026-10-18 02:27:34"
+    }
+   ]
+  },
+  {
+   "id": 199,
+   "title": "提单接口幂等键：客户端 token 去重防网络抖动建重",
+   "type": "opt",
+   "status": "closed",
+   "severity": "major",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": 2,
+   "description": "【背景】pages.dev 网络抖动下非幂等 POST（提单）响应丢失后重试/重提交会建重单（2026-10-08 语雀导入 30 条重复、10-17 深夜用户提单空响应疑惑，两次实证）。\n【现状】提单无幂等保护；前端失败提示\"网络错误\"但单可能已建成，用户无从判断。\n【验收要点】前端提单生成 client_token（随机 UUID）随单提交且失败重试复用同 token；服务端按 token 去重（重复提交返回已建单 id 不新建）；requirements 加 client_token 唯一索引；verify 断言覆盖（同 token 两次创建返回同单）。",
+   "tags": [
+    {
+     "id": 1,
+     "name": "AI整理"
+    },
+    {
+     "id": 25,
+     "name": "v1.1"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "助理",
+     "ctype": "ac",
+     "text": "开发完成并部署：requirements.client_token 唯一索引+apiReqCreate 去重（返回 dedup:true+已有 id）+并发 UNIQUE 兜底+前端 token 复用；verify 断言\"#199 幂等键去重\"PASS；实测同 token 两次=id 205 同单。用例 TC-051 起草。开发=agent（模拟验证留痕）",
+     "at": "2026-10-18 02:16:32"
+    }
+   ]
+  },
+  {
+   "id": 200,
+   "title": "全局项目上下文：顶栏项目选择器，全站页面共享固定项目",
+   "type": "opt",
+   "status": "closed",
+   "severity": "general",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": 2,
+   "description": "【背景】操作一个项目时通常不需要跨项目来回切换；项目选择应固定在最高层级（顶栏），一次选定全站生效，除非手动切换（用户 2026-10-18 提出，位置示意=顶栏右侧）。\n【现状】需求/文档/版本/用例四页各有独立的页内项目下拉，互相不联动；切页面要重新选；提单弹框默认项目跟随当前页。\n【验收要点】见验收标准评论。实现依托 app-common.js 组件底座（localStorage pool_project + 各页初始化联动 + 顶栏组件）。",
+   "tags": [
+    {
+     "id": 1,
+     "name": "AI整理"
+    },
+    {
+     "id": 25,
+     "name": "v1.1"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "ac",
+     "text": "【验收标准】\n1. 顶栏右侧（改密码左侧）新增全局项目选择器，显示当前项目名\n2. 选择后写入 localStorage（pool_project）：刷新浏览器/跳转任何页面均保持\n3. 需求列表、文档、版本、用例四页的项目下拉初始化时自动跟随全局选择\n4. 任一页切换项目=更新全局（一处切换全站生效），当前页立即刷新数据\n5. 提单弹框默认项目=全局选择的项目\n6. 顶栏选择器含「全部项目」选项时允许清空上下文（回项目卡片列表视图）\n7. 页内原有项目下拉与顶栏选择器双向联动（同一状态两处呈现）",
+     "at": "2026-10-18 09:10:49"
+    },
+    {
+     "actor": "助理",
+     "ctype": "ac",
+     "text": "开发完成并部署（app-common renderProjectBar 顶栏项目条+localStorage pool_project 持久+四页下拉初始化跟随+提单默认跟随，一处切换全站生效）；验收用例 TC-069 Playwright 实测全 PASS（初测 FAIL 系测试脚本 add_init_script 每次导航清空 localStorage 自证清空，脚本修正后 PASS，非产品缺陷）。开发=agent，验收=Playwright 自动化（模拟验证留痕）",
+     "at": "2026-10-18 12:11:14"
+    }
+   ]
+  },
+  {
+   "id": 193,
+   "title": "测试用需求",
+   "type": "req",
+   "status": "closed",
+   "severity": "",
+   "root_cause": "",
+   "ref_code": "",
+   "release_id": null,
+   "description": "测试图片上传压缩是否正常",
+   "tags": [
+    {
+     "id": 26,
+     "name": "测试用"
+    }
+   ],
+   "comments": [
+    {
+     "actor": "晓",
+     "ctype": "normal",
+     "text": "测试完成了，关闭测试用的需求",
+     "at": "2026-10-17 15:00:18"
+    }
+   ]
+  }
+ ],
+ "releases": [
+  {
+   "id": 2,
+   "project_id": 3,
+   "version": "1.1",
+   "change_scope": "v1.1 三需求：#196 项目/需求删除级联修复（两处缺口）/#190 docgen 三生成器+15件套模板/#191 月度审查SOP；用户加单：#195 状态显示修复/#197 弹框化全批（提单弹框/粘贴上传/关联bug modal/改密码当页）/#199 幂等键",
+   "retest_scope": "回归范围 A 全量：基线 25 条 + v1.1 用例 7 条（TC-036~040、050/051）= 32 条",
+   "status": "published",
+   "published_by": 1,
+   "published_at": "2026-10-18T12:21:28.201Z",
+   "confirmor_id": 1,
+   "confirmor_at": "2026-10-18T12:21:28.201Z",
+   "created_by": 4,
+   "created_at": "2026-10-18T08:32:41.993Z",
+   "updated_at": "2026-10-18T12:21:28.201Z",
+   "creator": "助理",
+   "bug_count": 7,
+   "executions": [
+    {
+     "id": 26,
+     "tc_id": 22,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:44.597Z",
+     "tc_code": "TC-001",
+     "tc_title": "文档创建与版本快照链",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 27,
+     "tc_id": 23,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:45.675Z",
+     "tc_code": "TC-002",
+     "tc_title": "文档评论绑版本",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 28,
+     "tc_id": 24,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:46.061Z",
+     "tc_code": "TC-003",
+     "tc_title": "文档三态流转与批准留痕",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 29,
+     "tc_id": 25,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:51.049Z",
+     "tc_code": "TC-004",
+     "tc_title": "文档门禁：未登录拒绝",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 30,
+     "tc_id": 26,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:55.835Z",
+     "tc_code": "TC-005",
+     "tc_title": "四维筛选导出与行数一致",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 31,
+     "tc_id": 27,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:56.232Z",
+     "tc_code": "TC-006",
+     "tc_title": "导出文件格式：BOM/表头/统计区",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 32,
+     "tc_id": 28,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:57.706Z",
+     "tc_code": "TC-007",
+     "tc_title": "导出门禁：未登录拒绝",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 33,
+     "tc_id": 29,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:58.078Z",
+     "tc_code": "TC-008",
+     "tc_title": "bug 建单带 severity/root_cause/ref_code",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 34,
+     "tc_id": 30,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:58.960Z",
+     "tc_code": "TC-009",
+     "tc_title": "ref_code 编号直达",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 35,
+     "tc_id": 31,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:59.350Z",
+     "tc_code": "TC-010",
+     "tc_title": "severity 筛选含未定级",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 56,
+     "tc_id": 32,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "涉及权限、稽查轨迹、编号唯一性、数据更正留痕的问题，级别最低应定为「重大」。\n确认以当前级别提交吗？（v1.1 回归 Playwright 实测）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:55.107Z",
+     "tc_code": "TC-011",
+     "tc_title": "红线提示：低级别 bug 提交拦截确认",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 36,
+     "tc_id": 33,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:59.741Z",
+     "tc_code": "TC-012",
+     "tc_title": "版本状态机流转",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 37,
+     "tc_id": 34,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:00.132Z",
+     "tc_code": "TC-013",
+     "tc_title": "发布确认人≠实施人拦截",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 38,
+     "tc_id": 35,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:00.504Z",
+     "tc_code": "TC-014",
+     "tc_title": "bug 关联版本与计数",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 39,
+     "tc_id": 36,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:01.840Z",
+     "tc_code": "TC-015",
+     "tc_title": "用例创建自动编号不复用",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 40,
+     "tc_id": 37,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:04.165Z",
+     "tc_code": "TC-016",
+     "tc_title": "用例编辑升版",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 41,
+     "tc_id": 38,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:05.033Z",
+     "tc_code": "TC-017",
+     "tc_title": "批准冻结：approved 编辑自动回草稿",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 42,
+     "tc_id": 39,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:06.851Z",
+     "tc_code": "TC-018",
+     "tc_title": "执行记录 upsert：同用例同版本一条",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 43,
+     "tc_id": 40,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:08.185Z",
+     "tc_code": "TC-019",
+     "tc_title": "按版本执行清单与统计",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 44,
+     "tc_id": 41,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:09.507Z",
+     "tc_code": "TC-020",
+     "tc_title": "验收标准评论：徽标+过滤",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 45,
+     "tc_id": 42,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:09.877Z",
+     "tc_code": "TC-021",
+     "tc_title": "枚举外类型回退普通",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 46,
+     "tc_id": 43,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:10.254Z",
+     "tc_code": "TC-022",
+     "tc_title": "导出验收标准汇总列",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 47,
+     "tc_id": 44,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "存储+门禁 ✓（压缩路径已责任方实传复核 491→245，#193）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:11.108Z",
+     "tc_code": "TC-023",
+     "tc_title": "图片上传压缩与门禁读取",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 48,
+     "tc_id": 45,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "统计输出正常",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:11.963Z",
+     "tc_code": "TC-024",
+     "tc_title": "月度体积统计脚本",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 49,
+     "tc_id": 46,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "匿名上传 401",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:12.339Z",
+     "tc_code": "TC-025",
+     "tc_title": "上传门禁：未登录拒绝",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 50,
+     "tc_id": 47,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "级联整删+项目消失",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:13.669Z",
+     "tc_code": "TC-036",
+     "tc_title": "级联删除：含 doc/release/用例的项目可整删",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 51,
+     "tc_id": 48,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "有需求禁删 400",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:14.517Z",
+     "tc_code": "TC-037",
+     "tc_title": "级联保护：有需求的项目仍禁删",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 52,
+     "tc_id": 49,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "三生成器 exit 0",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:16.318Z",
+     "tc_code": "TC-038",
+     "tc_title": "docgen 三生成器产出",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 53,
+     "tc_id": 50,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "报告含基线用例、探针未混入",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:16.699Z",
+     "tc_code": "TC-039",
+     "tc_title": "docgen 数据一致性抽核",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 54,
+     "tc_id": 51,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "标签留痕可检索（SOP id=3 已批准；评论已发）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:18.023Z",
+     "tc_code": "TC-040",
+     "tc_title": "月度审查留痕三件",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 57,
+     "tc_id": 53,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "偏差关闭：责任方页面复核确认弹框提单全流程正常（弹框打开/提单成功/均为弹框形态）。自动化 postMessage 联动未触发系 Playwright frame 时序问题，转遗留排查不阻塞",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T09:09:52.338Z",
+     "tc_code": "TC-050",
+     "tc_title": "提单弹框化：需求池内弹框提单",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 55,
+     "tc_id": 54,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "同 token 同单 202",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:53.927Z",
+     "tc_code": "TC-051",
+     "tc_title": "幂等键：同 token 重复提交返回同单",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 58,
+     "tc_id": 55,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "Playwright 实测：顶栏切换→localStorage 持久（=2）→文档/版本/用例三页下拉跟随→提单弹框默认项目一致，全链 ✓。初测 FAIL 系测试脚本 add_init_script 每次导航清空 localStorage（自证清空），脚本修正后 PASS，非产品缺陷",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T12:11:01.720Z",
+     "tc_code": "TC-069",
+     "tc_title": "全局项目上下文：顶栏选择器+持久+四页联动+提单跟随",
+     "tc_status": "approved",
+     "executor": "助理"
+    }
+   ],
+   "stat": {
+    "pass": 33,
+    "fail": 0,
+    "deviation": 0,
+    "empty": 0
+   }
+  },
+  {
+   "id": 1,
+   "project_id": 3,
+   "version": "1.0",
+   "change_scope": "v1.0 八需求：文档页/筛选导出/单据字段增强(severity四级+root_cause+ref_code)/releases版本单/用例库/执行记录/评论类型/图片存储治理（对应需求 #183-189、#192）",
+   "retest_scope": "批准基线 25 条用例（TC-001~025）全量执行：高风险 8 条必测，正向+负向+边界覆盖",
+   "status": "published",
+   "published_by": 1,
+   "published_at": "2026-10-17T15:09:27.291Z",
+   "confirmor_id": 1,
+   "confirmor_at": "2026-10-17T15:09:27.291Z",
+   "created_by": 4,
+   "created_at": "2026-10-17T14:13:00.922Z",
+   "updated_at": "2026-10-17T15:09:27.291Z",
+   "creator": "助理",
+   "bug_count": 8,
+   "executions": [
+    {
+     "id": 1,
+     "tc_id": 22,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "版本递增+历史可回看",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:27.787Z",
+     "tc_code": "TC-001",
+     "tc_title": "文档创建与版本快照链",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 2,
+     "tc_id": 23,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "评论锁定 v2，升版后标注不变",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:29.066Z",
+     "tc_code": "TC-002",
+     "tc_title": "文档评论绑版本",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 3,
+     "tc_id": 24,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "批准落人+批准后编辑回草稿",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:29.523Z",
+     "tc_code": "TC-003",
+     "tc_title": "文档三态流转与批准留痕",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 4,
+     "tc_id": 25,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "API 401 / 页面 302 跳登录",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:30.071Z",
+     "tc_code": "TC-004",
+     "tc_title": "文档门禁：未登录拒绝",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 5,
+     "tc_id": 26,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "列表 13 行 = CSV 13 行",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:31.216Z",
+     "tc_code": "TC-005",
+     "tc_title": "四维筛选导出与行数一致",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 6,
+     "tc_id": 27,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "复测 PASS：BOM+11 列表头+统计区齐备。初测 FAIL 系执行脚本断言缺陷（表头为带引号 CSV 形式），非产品缺陷",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:31.788Z",
+     "tc_code": "TC-006",
+     "tc_title": "导出文件格式：BOM/表头/统计区",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 7,
+     "tc_id": 28,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "匿名导出 401",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:33.483Z",
+     "tc_code": "TC-007",
+     "tc_title": "导出门禁：未登录拒绝",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 8,
+     "tc_id": 29,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "三字段入库回显",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:33.931Z",
+     "tc_code": "TC-008",
+     "tc_title": "bug 建单带 severity/root_cause/ref_code",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 9,
+     "tc_id": 30,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "ref 精确命中探针单",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:34.414Z",
+     "tc_code": "TC-009",
+     "tc_title": "ref_code 编号直达",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 10,
+     "tc_id": 31,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "major/none 两档筛选正确",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:34.786Z",
+     "tc_code": "TC-010",
+     "tc_title": "severity 筛选含未定级",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 25,
+     "tc_id": 32,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "Playwright 实测：bug+一般 提交弹确认框，文案逐字命中\"…最低应定「重大」…\"（初测 FAIL 系断言未算「」引号，非产品问题）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:31:43.934Z",
+     "tc_code": "TC-011",
+     "tc_title": "红线提示：低级别 bug 提交拦截确认",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 11,
+     "tc_id": 33,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "planning→testing→reverify 流转正常（发布确认见 TC-013 后由责任方执行）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:35.797Z",
+     "tc_code": "TC-012",
+     "tc_title": "版本状态机流转",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 12,
+     "tc_id": 34,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "实施人自确认被 400 拒绝",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:37.916Z",
+     "tc_code": "TC-013",
+     "tc_title": "发布确认人≠实施人拦截",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 13,
+     "tc_id": 35,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "关联后计数 1",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:39.603Z",
+     "tc_code": "TC-014",
+     "tc_title": "bug 关联版本与计数",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 14,
+     "tc_id": 36,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "复测 PASS：TC-029 删除后新建 TC-030 未复用。初测 FAIL 抓到真 bug（MAX 法删除尾部编号后复用），已修（counters 持久计数器原子递增）；原 FAIL 结果保留于执行历史",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:42.371Z",
+     "tc_code": "TC-015",
+     "tc_title": "用例创建自动编号不复用",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 15,
+     "tc_id": 37,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "版本+1+摘要落库",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:43.978Z",
+     "tc_code": "TC-016",
+     "tc_title": "用例编辑升版",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 16,
+     "tc_id": 38,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "批准落人+批准后编辑回草稿",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:45.495Z",
+     "tc_code": "TC-017",
+     "tc_title": "批准冻结：approved 编辑自动回草稿",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 17,
+     "tc_id": 39,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "upsert 后单条且取最后一次",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:46.515Z",
+     "tc_code": "TC-018",
+     "tc_title": "执行记录 upsert：同用例同版本一条",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 18,
+     "tc_id": 40,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "清单+四档统计口径齐备（当前 pass=1）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:46.928Z",
+     "tc_code": "TC-019",
+     "tc_title": "按版本执行清单与统计",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 19,
+     "tc_id": 41,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "ctype=ac 入库；徽标为渲染层已上线",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:47.441Z",
+     "tc_code": "TC-020",
+     "tc_title": "验收标准评论：徽标+过滤",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 20,
+     "tc_id": 42,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "已移除类型回退 normal",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:48.442Z",
+     "tc_code": "TC-021",
+     "tc_title": "枚举外类型回退普通",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 21,
+     "tc_id": 43,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "复测 PASS：ac 评论进\"验收标准汇总\"列。初测 FAIL 系断言用 #id 匹配而导出编号列为纯数字，非产品缺陷",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:31:39.862Z",
+     "tc_code": "TC-022",
+     "tc_title": "导出验收标准汇总列",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 22,
+     "tc_id": 44,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "压缩路径复核 ✓（责任方实传 491KB PNG→前端压缩 245KB JPEG 入库）；缩略图破图（detail 缺 r2_key 别名）修复后责任方确认图片显示正常。偏差关闭",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10+#193 附件",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T15:08:18.793Z",
+     "tc_code": "TC-023",
+     "tc_title": "图片上传压缩与门禁读取",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 23,
+     "tc_id": 45,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "统计输出正常（阈值内）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:31:40.673Z",
+     "tc_code": "TC-024",
+     "tc_title": "月度体积统计脚本",
+     "tc_status": "approved",
+     "executor": "助理"
+    },
+    {
+     "id": 24,
+     "tc_id": 46,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "匿名上传 401",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:31:42.716Z",
+     "tc_code": "TC-025",
+     "tc_title": "上传门禁：未登录拒绝",
+     "tc_status": "approved",
+     "executor": "助理"
+    }
+   ],
+   "stat": {
+    "pass": 25,
+    "fail": 0,
+    "deviation": 0,
+    "empty": 0
+   }
+  }
+ ],
+ "testcases": [
+  {
+   "id": 22,
+   "project_id": 3,
+   "tc_code": "TC-001",
+   "title": "文档创建与版本快照链",
+   "steps_md": "**前置**：登录 story-pool 项目\n**步骤**：\n1. 新建文档（标题+初始内容）\n2. 编辑保存一次（改内容+填修订摘要）\n3. 打开版本历史，点击历史版本回看\n4. 返回当前版\n**预期**：每次保存版本+1 并落修订摘要；历史版本内容与当时一致可回看；返回当前版正常",
+   "related_req": 183,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:23.663Z",
+   "updated_at": "2026-10-17T14:08:14.056Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:14.056Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "文档页：项目内 md+版本快照+评论绑版本+三态流转",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:23.663Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 26,
+     "tc_id": 22,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:44.597Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 1,
+     "tc_id": 22,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "版本递增+历史可回看",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:27.787Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 23,
+   "project_id": 3,
+   "tc_code": "TC-002",
+   "title": "文档评论绑版本",
+   "steps_md": "**前置**：存在多版本文档\n**步骤**：\n1. 在当前版本 vN 下发评论\n2. 文档编辑升版到 vN+1\n3. 回看该评论\n**预期**：评论显示\"针对 vN\"；升版后旧评论的版本标注不变",
+   "related_req": 183,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:24.051Z",
+   "updated_at": "2026-10-17T14:08:15.354Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:15.354Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "文档页：项目内 md+版本快照+评论绑版本+三态流转",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:24.051Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 27,
+     "tc_id": 23,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:45.675Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 2,
+     "tc_id": 23,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "评论锁定 v2，升版后标注不变",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:29.066Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 24,
+   "project_id": 3,
+   "tc_code": "TC-003",
+   "title": "文档三态流转与批准留痕",
+   "steps_md": "**步骤**：\n1. 草稿→提交评审→批准\n2. 查看批准人与批准日期\n3. 批准后再编辑保存\n**预期**：批准落 approved_by/at 并显示\"批准 人 日期\"；批准后编辑自动回草稿且批准记录清空",
+   "related_req": 183,
+   "covers_urs": "",
+   "risk": "high",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:24.571Z",
+   "updated_at": "2026-10-17T14:08:15.794Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:15.794Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "文档页：项目内 md+版本快照+评论绑版本+三态流转",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:24.571Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 28,
+     "tc_id": 24,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:46.061Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 3,
+     "tc_id": 24,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "批准落人+批准后编辑回草稿",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:29.523Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 25,
+   "project_id": 3,
+   "tc_code": "TC-004",
+   "title": "文档门禁：未登录拒绝",
+   "steps_md": "**步骤**：匿名（无 cookie）访问 /docs.html 与 /api/docs\n**预期**：页面 302 跳登录；API 401 拒绝",
+   "related_req": 183,
+   "covers_urs": "",
+   "risk": "high",
+   "ctype": "negative",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:25.007Z",
+   "updated_at": "2026-10-17T14:08:16.202Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:16.202Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "文档页：项目内 md+版本快照+评论绑版本+三态流转",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:25.007Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 29,
+     "tc_id": 25,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:51.049Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 4,
+     "tc_id": 25,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "API 401 / 页面 302 跳登录",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:30.071Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 26,
+   "project_id": 3,
+   "tc_code": "TC-005",
+   "title": "四维筛选导出与行数一致",
+   "steps_md": "**步骤**：\n1. 列表按 项目+状态+类型+级别 组合筛选，记录条数\n2. 点「⬇ 导出」下载 CSV\n**预期**：CSV 数据行数与列表筛选结果一致；筛选条件正确作用于导出",
+   "related_req": 184,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:25.410Z",
+   "updated_at": "2026-10-17T14:08:16.675Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:16.675Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "筛选导出：四维筛选+五维度统计 CSV",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:25.410Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 30,
+     "tc_id": 26,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:55.835Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 5,
+     "tc_id": 26,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "列表 13 行 = CSV 13 行",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:31.216Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 27,
+   "project_id": 3,
+   "tc_code": "TC-006",
+   "title": "导出文件格式：BOM/表头/统计区",
+   "steps_md": "**步骤**：检查导出 CSV 文件头与结构\n**预期**：UTF-8 BOM 开头（Excel 打开不乱码）；表头 11 列（编号…验收标准汇总）；尾部含 == 统计汇总 == 区（按状态/级别/根因/项目/类型计数）",
+   "related_req": 184,
+   "covers_urs": "",
+   "risk": "low",
+   "ctype": "boundary",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:25.937Z",
+   "updated_at": "2026-10-17T14:08:17.123Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:17.123Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "筛选导出：四维筛选+五维度统计 CSV",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:25.937Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 31,
+     "tc_id": 27,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:56.232Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 6,
+     "tc_id": 27,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "复测 PASS：BOM+11 列表头+统计区齐备。初测 FAIL 系执行脚本断言缺陷（表头为带引号 CSV 形式），非产品缺陷",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:31.788Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 28,
+   "project_id": 3,
+   "tc_code": "TC-007",
+   "title": "导出门禁：未登录拒绝",
+   "steps_md": "**步骤**：匿名 GET /api/export\n**预期**：401 拒绝，不产出文件",
+   "related_req": 184,
+   "covers_urs": "",
+   "risk": "high",
+   "ctype": "negative",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:26.398Z",
+   "updated_at": "2026-10-17T14:08:17.550Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:17.550Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "筛选导出：四维筛选+五维度统计 CSV",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:26.398Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 32,
+     "tc_id": 28,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:57.706Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 7,
+     "tc_id": 28,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "匿名导出 401",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:33.483Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 29,
+   "project_id": 3,
+   "tc_code": "TC-008",
+   "title": "bug 建单带 severity/root_cause/ref_code",
+   "steps_md": "**步骤**：\n1. 提单选类型 Bug→严重级别/根因/关联编号字段出现\n2. 填写提交\n3. 打开详情与编辑\n**预期**：字段入库且回显正确；编辑可修改",
+   "related_req": 185,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:26.853Z",
+   "updated_at": "2026-10-17T14:08:19.162Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:19.162Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "单据字段增强：severity 四级+root_cause+ref_code 编号互指",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:26.853Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 33,
+     "tc_id": 29,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:58.078Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 8,
+     "tc_id": 29,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "三字段入库回显",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:33.931Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 30,
+   "project_id": 3,
+   "tc_code": "TC-009",
+   "title": "ref_code 编号直达",
+   "steps_md": "**步骤**：搜索框输入单据的关联编号（如 ISS-2026-001）\n**预期**：按 ref_code 精确命中并弹出该单抽屉",
+   "related_req": 185,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:27.434Z",
+   "updated_at": "2026-10-17T14:08:20.153Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:20.153Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "单据字段增强：severity 四级+root_cause+ref_code 编号互指",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:27.434Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 34,
+     "tc_id": 30,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:58.960Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 9,
+     "tc_id": 30,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "ref 精确命中探针单",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:34.414Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 31,
+   "project_id": 3,
+   "tc_code": "TC-010",
+   "title": "severity 筛选含未定级",
+   "steps_md": "**步骤**：\n1. 级别筛\"关键\"→仅关键单\n2. 级别筛\"未定级\"→仅 severity 为空的单\n**预期**：两种筛选结果均正确",
+   "related_req": 185,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "boundary",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:27.853Z",
+   "updated_at": "2026-10-17T14:08:20.635Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:20.635Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "单据字段增强：severity 四级+root_cause+ref_code 编号互指",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:27.853Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 35,
+     "tc_id": 31,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:59.350Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 10,
+     "tc_id": 31,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "major/none 两档筛选正确",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:34.786Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 32,
+   "project_id": 3,
+   "tc_code": "TC-011",
+   "title": "红线提示：低级别 bug 提交拦截确认",
+   "steps_md": "**步骤**：提单选 Bug、严重级别选\"一般\"或\"观察\"，提交\n**预期**：弹出确认提示\"涉及权限/稽查轨迹/编号唯一性/数据更正留痕的问题最低应定重大\"；取消则不提交",
+   "related_req": 185,
+   "covers_urs": "",
+   "risk": "high",
+   "ctype": "negative",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:28.331Z",
+   "updated_at": "2026-10-17T14:08:30.171Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:30.171Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "单据字段增强：severity 四级+root_cause+ref_code 编号互指",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:28.331Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 56,
+     "tc_id": 32,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "涉及权限、稽查轨迹、编号唯一性、数据更正留痕的问题，级别最低应定为「重大」。\n确认以当前级别提交吗？（v1.1 回归 Playwright 实测）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:55.107Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 25,
+     "tc_id": 32,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "Playwright 实测：bug+一般 提交弹确认框，文案逐字命中\"…最低应定「重大」…\"（初测 FAIL 系断言未算「」引号，非产品问题）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:31:43.934Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 33,
+   "project_id": 3,
+   "tc_code": "TC-012",
+   "title": "版本状态机流转",
+   "steps_md": "**步骤**：\n1. 新建版本（规划中）→进入测试→转待再验证\n2. 换另一账号点发布确认→已发布→关闭\n**预期**：状态按序流转；发布确认记录确认人与时间",
+   "related_req": 186,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:28.847Z",
+   "updated_at": "2026-10-17T14:08:31.233Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:31.233Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "releases 版本发布单：CR-V 承载+状态机",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:28.847Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 36,
+     "tc_id": 33,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:52:59.741Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 11,
+     "tc_id": 33,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "planning→testing→reverify 流转正常（发布确认见 TC-013 后由责任方执行）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:35.797Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 34,
+   "project_id": 3,
+   "tc_code": "TC-013",
+   "title": "发布确认人≠实施人拦截",
+   "steps_md": "**步骤**：创建版本的原账号（实施人）对自己建的版本点\"发布确认\"\n**预期**：400 拒绝，提示\"发布确认人不能是实施人（创建人）本人\"",
+   "related_req": 186,
+   "covers_urs": "",
+   "risk": "high",
+   "ctype": "negative",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:29.282Z",
+   "updated_at": "2026-10-17T14:08:31.641Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:31.641Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "releases 版本发布单：CR-V 承载+状态机",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:29.282Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 37,
+     "tc_id": 34,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:00.132Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 12,
+     "tc_id": 34,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "实施人自确认被 400 拒绝",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:37.916Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 35,
+   "project_id": 3,
+   "tc_code": "TC-014",
+   "title": "bug 关联版本与计数",
+   "steps_md": "**步骤**：\n1. 版本卡片点「🔗 关联 bug」输入 bug 编号\n2. 查看版本卡片计数\n**预期**：关联成功计数+1；重复关联不重复计数",
+   "related_req": 186,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:29.792Z",
+   "updated_at": "2026-10-17T14:08:32.117Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:32.117Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "releases 版本发布单：CR-V 承载+状态机",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:29.792Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 38,
+     "tc_id": 35,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:00.504Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 13,
+     "tc_id": 35,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "关联后计数 1",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:39.603Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 36,
+   "project_id": 3,
+   "tc_code": "TC-015",
+   "title": "用例创建自动编号不复用",
+   "steps_md": "**步骤**：\n1. 连续创建两条用例\n2. 删除第二条后再创建一条\n**预期**：TC 编号顺序递增；删除后新用例编号继续递增不复用已删编号",
+   "related_req": 187,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:30.289Z",
+   "updated_at": "2026-10-17T14:08:33.131Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:33.131Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "用例库 test_cases：全文+关联需求+批准冻结+版本快照",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:30.289Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 39,
+     "tc_id": 36,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:01.840Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 14,
+     "tc_id": 36,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "复测 PASS：TC-029 删除后新建 TC-030 未复用。初测 FAIL 抓到真 bug（MAX 法删除尾部编号后复用），已修（counters 持久计数器原子递增）；原 FAIL 结果保留于执行历史",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:42.371Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 37,
+   "project_id": 3,
+   "tc_code": "TC-016",
+   "title": "用例编辑升版",
+   "steps_md": "**步骤**：编辑用例步骤内容+修订摘要保存\n**预期**：版本+1；版本历史含新摘要；旧版本可回看",
+   "related_req": 187,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:30.678Z",
+   "updated_at": "2026-10-17T14:08:35.241Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:35.241Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "用例库 test_cases：全文+关联需求+批准冻结+版本快照",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:30.678Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 40,
+     "tc_id": 37,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:04.165Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 15,
+     "tc_id": 37,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "版本+1+摘要落库",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:43.978Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 38,
+   "project_id": 3,
+   "tc_code": "TC-017",
+   "title": "批准冻结：approved 编辑自动回草稿",
+   "steps_md": "**步骤**：\n1. 用例批准（approved_by 落人）\n2. 编辑内容保存\n**预期**：状态自动回 draft 且批准记录清空；版本历史保留批准时的版本",
+   "related_req": 187,
+   "covers_urs": "",
+   "risk": "high",
+   "ctype": "boundary",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:31.621Z",
+   "updated_at": "2026-10-17T14:08:35.638Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:35.638Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "用例库 test_cases：全文+关联需求+批准冻结+版本快照",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:31.621Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 41,
+     "tc_id": 38,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:05.033Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 16,
+     "tc_id": 38,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "批准落人+批准后编辑回草稿",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:45.495Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 39,
+   "project_id": 3,
+   "tc_code": "TC-018",
+   "title": "执行记录 upsert：同用例同版本一条",
+   "steps_md": "**步骤**：\n1. 对同一用例同一版本录入执行记录（通过）\n2. 再次录入（未通过+DEV 号）\n**预期**：仍只有一条记录，结果以最后一次为准，含 DEV 号",
+   "related_req": 188,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:32.014Z",
+   "updated_at": "2026-10-17T14:08:36.069Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:36.069Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "用例执行记录：挂 releases+按版本出清单与统计",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:32.014Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 42,
+     "tc_id": 39,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:06.851Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 17,
+     "tc_id": 39,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "upsert 后单条且取最后一次",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:46.515Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 40,
+   "project_id": 3,
+   "tc_code": "TC-019",
+   "title": "按版本执行清单与统计",
+   "steps_md": "**步骤**：\n1. 对多条用例分别录入通过/未通过/偏差\n2. 查看该版本的执行清单\n**预期**：清单完整；通过/未通过/偏差计数与录入一致",
+   "related_req": 188,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:32.483Z",
+   "updated_at": "2026-10-17T14:08:36.531Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:36.531Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "用例执行记录：挂 releases+按版本出清单与统计",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:32.483Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 43,
+     "tc_id": 40,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:08.185Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 18,
+     "tc_id": 40,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "清单+四档统计口径齐备（当前 pass=1）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:46.928Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 41,
+   "project_id": 3,
+   "tc_code": "TC-020",
+   "title": "验收标准评论：徽标+过滤",
+   "steps_md": "**步骤**：\n1. 需求评论选类型\"验收标准\"发送\n2. \"只看类型\"筛验收标准\n**预期**：评论带徽标显示；过滤只留验收标准类",
+   "related_req": 189,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:32.953Z",
+   "updated_at": "2026-10-17T14:08:37.553Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:37.553Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "评论类型：普通/验收标准/测试用例三档",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:32.953Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 44,
+     "tc_id": 41,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:09.507Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 19,
+     "tc_id": 41,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "ctype=ac 入库；徽标为渲染层已上线",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:47.441Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 42,
+   "project_id": 3,
+   "tc_code": "TC-021",
+   "title": "枚举外类型回退普通",
+   "steps_md": "**步骤**：接口提交 ctype=testcase（已移除的类型）\n**预期**：落库为普通评论（枚举外回退），不出现测试用例徽标",
+   "related_req": 189,
+   "covers_urs": "",
+   "risk": "low",
+   "ctype": "boundary",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:33.381Z",
+   "updated_at": "2026-10-17T14:08:39.627Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:39.627Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "评论类型：普通/验收标准/测试用例三档",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:33.381Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 45,
+     "tc_id": 42,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:09.877Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 20,
+     "tc_id": 42,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "已移除类型回退 normal",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:30:48.442Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 43,
+   "project_id": 3,
+   "tc_code": "TC-022",
+   "title": "导出验收标准汇总列",
+   "steps_md": "**步骤**：需求含验收标准评论→导出 CSV\n**预期**：\"验收标准汇总\"列含该评论内容；普通评论不进该列",
+   "related_req": 189,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:33.875Z",
+   "updated_at": "2026-10-17T14:08:40.058Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:40.058Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "评论类型：普通/验收标准/测试用例三档",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:33.875Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 46,
+     "tc_id": 43,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "v1.1 回归通过",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:10.254Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 21,
+     "tc_id": 43,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "复测 PASS：ac 评论进\"验收标准汇总\"列。初测 FAIL 系断言用 #id 匹配而导出编号列为纯数字，非产品缺陷",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:31:39.862Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 44,
+   "project_id": 3,
+   "tc_code": "TC-023",
+   "title": "图片上传压缩与门禁读取",
+   "steps_md": "**步骤**：\n1. 上传 >300KB 图片\n2. 通过返回的 URL 读取\n**预期**：图片自动压缩至 300KB 内存储；登录态 URL 可访问；匿名读取被拒",
+   "related_req": 192,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:34.275Z",
+   "updated_at": "2026-10-17T14:08:41.022Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:41.022Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "图片存储治理：storage 抽象层+体积月度统计",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:34.275Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 47,
+     "tc_id": 44,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "存储+门禁 ✓（压缩路径已责任方实传复核 491→245，#193）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:11.108Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 22,
+     "tc_id": 44,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "压缩路径复核 ✓（责任方实传 491KB PNG→前端压缩 245KB JPEG 入库）；缩略图破图（detail 缺 r2_key 别名）修复后责任方确认图片显示正常。偏差关闭",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10+#193 附件",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T15:08:18.793Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 45,
+   "project_id": 3,
+   "tc_code": "TC-024",
+   "title": "月度体积统计脚本",
+   "steps_md": "**步骤**：运行 scripts/blob_stats.py\n**预期**：输出 BLOB 数量/总体积/最大单张/阈值百分比；超 3GB 时 exit 1 告警",
+   "related_req": 192,
+   "covers_urs": "",
+   "risk": "low",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:34.690Z",
+   "updated_at": "2026-10-17T14:08:41.525Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:41.525Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "图片存储治理：storage 抽象层+体积月度统计",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:34.690Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 48,
+     "tc_id": 45,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "统计输出正常",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:11.963Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 23,
+     "tc_id": 45,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "统计输出正常（阈值内）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:31:40.673Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 46,
+   "project_id": 3,
+   "tc_code": "TC-025",
+   "title": "上传门禁：未登录拒绝",
+   "steps_md": "**步骤**：匿名 POST /api/upload\n**预期**：401 拒绝",
+   "related_req": 192,
+   "covers_urs": "",
+   "risk": "high",
+   "ctype": "negative",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 1,
+   "created_at": "2026-10-17T13:59:35.189Z",
+   "updated_at": "2026-10-17T14:08:42.514Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-17T14:08:42.514Z",
+   "creator": "晓",
+   "approver": "晓",
+   "related_req_title": "图片存储治理：storage 抽象层+体积月度统计",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T13:59:35.189Z",
+     "author": "晓"
+    }
+   ],
+   "executions": [
+    {
+     "id": 49,
+     "tc_id": 46,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "匿名上传 401",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:12.339Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    },
+    {
+     "id": 24,
+     "tc_id": 46,
+     "release_id": 1,
+     "result": "pass",
+     "conclusion": "匿名上传 401",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v10",
+     "executed_by": 4,
+     "executed_at": "2026-10-17T14:31:42.716Z",
+     "release_version": "1.0",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 47,
+   "project_id": 3,
+   "tc_code": "TC-036",
+   "title": "级联删除：含 doc/release/用例的项目可整删",
+   "steps_md": "**前置**：新建项目并创建 1 篇文档+1 个版本+1 条用例（需求为 0）\n**步骤**：\n1. 直接删除该项目\n2. 项目列表核对\n**预期**：删除成功；docs/releases/test_cases 全部级联消失（#196 修复前外键 500）",
+   "related_req": 196,
+   "covers_urs": "",
+   "risk": "high",
+   "ctype": "negative",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 4,
+   "created_at": "2026-10-17T15:26:09.588Z",
+   "updated_at": "2026-10-18T08:30:33.653Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-18T08:30:33.653Z",
+   "creator": "助理",
+   "approver": "晓",
+   "related_req_title": "项目删除级联修复：清理 releases/test_cases/docs 引用",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T15:26:09.588Z",
+     "author": "助理"
+    }
+   ],
+   "executions": [
+    {
+     "id": 50,
+     "tc_id": 47,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "级联整删+项目消失",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:13.669Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 48,
+   "project_id": 3,
+   "tc_code": "TC-037",
+   "title": "级联保护：有需求的项目仍禁删",
+   "steps_md": "**前置**：项目含至少 1 条需求\n**步骤**：尝试删除项目\n**预期**：400\"项目下仍有需求，不能删除\"（保护保留）",
+   "related_req": 196,
+   "covers_urs": "",
+   "risk": "high",
+   "ctype": "negative",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 4,
+   "created_at": "2026-10-17T15:26:10.145Z",
+   "updated_at": "2026-10-18T08:30:34.709Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-18T08:30:34.709Z",
+   "creator": "助理",
+   "approver": "晓",
+   "related_req_title": "项目删除级联修复：清理 releases/test_cases/docs 引用",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T15:26:10.145Z",
+     "author": "助理"
+    }
+   ],
+   "executions": [
+    {
+     "id": 51,
+     "tc_id": 48,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "有需求禁删 400",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:14.517Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 49,
+   "project_id": 3,
+   "tc_code": "TC-038",
+   "title": "docgen 三生成器产出",
+   "steps_md": "**步骤**：依次运行 docgen.py csv14/report/rtm\n**预期**：三份 md 生成；report 执行统计与 release 卡片一致；csv14 含五维度统计",
+   "related_req": 190,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 4,
+   "created_at": "2026-10-17T15:26:10.717Z",
+   "updated_at": "2026-10-18T08:30:36.946Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-18T08:30:36.946Z",
+   "creator": "助理",
+   "approver": "晓",
+   "related_req_title": "docgen 脚本+15 件套模板入库",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T15:26:10.717Z",
+     "author": "助理"
+    }
+   ],
+   "executions": [
+    {
+     "id": 52,
+     "tc_id": 49,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "三生成器 exit 0",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:16.318Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 50,
+   "project_id": 3,
+   "tc_code": "TC-039",
+   "title": "docgen 数据一致性抽核",
+   "steps_md": "**步骤**：随机抽 1 条 bug/1 条执行记录，比对生成物与池内数据\n**预期**：逐字段一致（生成快照=池内真相）",
+   "related_req": 190,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "boundary",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 4,
+   "created_at": "2026-10-17T15:26:11.979Z",
+   "updated_at": "2026-10-18T08:30:37.333Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-18T08:30:37.333Z",
+   "creator": "助理",
+   "approver": "晓",
+   "related_req_title": "docgen 脚本+15 件套模板入库",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T15:26:11.979Z",
+     "author": "助理"
+    }
+   ],
+   "executions": [
+    {
+     "id": 53,
+     "tc_id": 50,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "报告含基线用例、探针未混入",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:16.699Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 51,
+   "project_id": 3,
+   "tc_code": "TC-040",
+   "title": "月度审查留痕三件",
+   "steps_md": "**步骤**：按 SOP id=3 执行一次月度审查（导出/清点/评论+标签留痕）\n**预期**：评论与标签（月度审查-YYYYMM）可检索；纪要归档",
+   "related_req": 191,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 4,
+   "created_at": "2026-10-17T15:26:12.489Z",
+   "updated_at": "2026-10-18T08:30:37.727Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-18T08:30:37.727Z",
+   "creator": "助理",
+   "approver": "晓",
+   "related_req_title": "定期审查留痕：月度运营例会输入件+结论",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T15:26:12.489Z",
+     "author": "助理"
+    }
+   ],
+   "executions": [
+    {
+     "id": 54,
+     "tc_id": 51,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "标签留痕可检索（SOP id=3 已批准；评论已发）",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:18.023Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 53,
+   "project_id": 3,
+   "tc_code": "TC-050",
+   "title": "提单弹框化：需求池内弹框提单",
+   "steps_md": "**步骤**：\n1. 需求列表页点「＋ 新需求」\n2. 弹框内完成提单（含截图）\n**预期**：弹框提单不跳页；成功后弹框关闭、列表刷新并自动打开新单抽屉",
+   "related_req": 197,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 4,
+   "created_at": "2026-10-18T02:16:06.451Z",
+   "updated_at": "2026-10-18T08:30:38.994Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-18T08:30:38.994Z",
+   "creator": "助理",
+   "approver": "晓",
+   "related_req_title": "一些页面调整能用弹框的就别用页面跳转",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-18T02:16:06.451Z",
+     "author": "助理"
+    }
+   ],
+   "executions": [
+    {
+     "id": 57,
+     "tc_id": 53,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "偏差关闭：责任方页面复核确认弹框提单全流程正常（弹框打开/提单成功/均为弹框形态）。自动化 postMessage 联动未触发系 Playwright frame 时序问题，转遗留排查不阻塞",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T09:09:52.338Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 54,
+   "project_id": 3,
+   "tc_code": "TC-051",
+   "title": "幂等键：同 token 重复提交返回同单",
+   "steps_md": "**步骤**：\n1. 同 client_token 连续两次创建需求\n2. 核对两次返回\n**预期**：第二次返回 dedup:true 且 id 与第一次相同（不建重单）",
+   "related_req": 199,
+   "covers_urs": "",
+   "risk": "high",
+   "ctype": "boundary",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 4,
+   "created_at": "2026-10-18T02:16:06.937Z",
+   "updated_at": "2026-10-18T08:30:39.875Z",
+   "approved_by": 1,
+   "approved_at": "2026-10-18T08:30:39.875Z",
+   "creator": "助理",
+   "approver": "晓",
+   "related_req_title": "提单接口幂等键：客户端 token 去重防网络抖动建重",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-18T02:16:06.937Z",
+     "author": "助理"
+    }
+   ],
+   "executions": [
+    {
+     "id": 55,
+     "tc_id": 54,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "同 token 同单 202",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T08:53:53.927Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    }
+   ]
+  },
+  {
+   "id": 55,
+   "project_id": 3,
+   "tc_code": "TC-069",
+   "title": "全局项目上下文：顶栏选择器+持久+四页联动+提单跟随",
+   "steps_md": "**前置**：浏览器 localStorage 无 pool_project（或清空）\n**步骤**：\n1. 顶栏项目选择器切到目标项目\n2. 刷新浏览器与跳转其他页面\n3. 核对四页（需求/文档/版本/用例）项目下拉\n4. 打开提单弹框看默认项目\n5. 任一页切换项目\n**预期**：选择写入 localStorage 持久；四页全部跟随；提单默认项目一致；一处切换全站生效",
+   "related_req": 200,
+   "covers_urs": "",
+   "risk": "middle",
+   "ctype": "positive",
+   "status": "approved",
+   "current_version": 1,
+   "created_by": 4,
+   "created_at": "2026-10-18T11:58:27.117Z",
+   "updated_at": "2026-10-18T11:58:28.253Z",
+   "approved_by": 4,
+   "approved_at": "2026-10-18T11:58:28.253Z",
+   "creator": "助理",
+   "approver": "助理",
+   "related_req_title": "全局项目上下文：顶栏项目选择器，全站页面共享固定项目",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-18T11:58:27.117Z",
+     "author": "助理"
+    }
+   ],
+   "executions": [
+    {
+     "id": 58,
+     "tc_id": 55,
+     "release_id": 2,
+     "result": "pass",
+     "conclusion": "Playwright 实测：顶栏切换→localStorage 持久（=2）→文档/版本/用例三页下拉跟随→提单弹框默认项目一致，全链 ✓。初测 FAIL 系测试脚本 add_init_script 每次导航清空 localStorage（自证清空），脚本修正后 PASS，非产品缺陷",
+     "dev_ref": "",
+     "ev_ref": "EV-batch-v11",
+     "executed_by": 4,
+     "executed_at": "2026-10-18T12:11:01.720Z",
+     "release_version": "1.1",
+     "executor": "助理"
+    }
+   ]
+  }
+ ],
+ "docs": [
+  {
+   "id": 4,
+   "project_id": 3,
+   "title": "story-pool v1.1 版本测试报告（评审稿）",
+   "current_version": 1,
+   "status": "approved",
+   "approved_by": 1,
+   "approved_at": "2026-10-18T09:05:50.419Z",
+   "created_by": 1,
+   "created_at": "2026-10-18T08:58:36.095Z",
+   "updated_at": "2026-10-18T09:05:50.419Z",
+   "author": "晓",
+   "project_name": "story-pool",
+   "content_md": "# story-pool v1.1 版本测试报告\n\n**被测版本**：v1.1（release #2）｜**测试基线**：TC-001~025（已批准）+ v1.1 用例 TC-036~040、TC-050/051（已批准）｜**回归范围**：A 全量（32 条）｜**执行**：agent（qwenpaw 实施身份），API 脚本 + Playwright 前端实测\n\n**变更范围**：v1.1 三需求：#196 项目/需求删除级联修复（两处缺口）/#190 docgen 三生成器+15件套模板/#191 月度审查SOP；用户加单：#195 状态显示修复/#197 弹框化全批（提单弹框/粘贴上传/关联bug modal/改密码当页）/#199 幂等键\n\n**再验证范围**：回归范围 A 全量：基线 25 条 + v1.1 用例 7 条（TC-036~040、050/051）= 32 条\n\n## 一、执行统计\n\n| 通过 | 未通过 | 偏差 | 未执行 |\n|---|---|---|---|\n| 31 | 0 | 1 | 0 |\n\n## 二、执行明细\n\n| 用例 | 标题 | 结果 | 结论 | DEV号 | EV号 | 执行人 |\n|---|---|---|---|---|---|---|\n| TC-001 | 文档创建与版本快照链 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-002 | 文档评论绑版本 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-003 | 文档三态流转与批准留痕 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-004 | 文档门禁：未登录拒绝 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-005 | 四维筛选导出与行数一致 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-006 | 导出文件格式：BOM/表头/统计区 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-007 | 导出门禁：未登录拒绝 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-008 | bug 建单带 severity/root_cause/ref_code | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-009 | ref_code 编号直达 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-010 | severity 筛选含未定级 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-011 | 红线提示：低级别 bug 提交拦截确认 | 通过 | 涉及权限、稽查轨迹、编号唯一性、数据更正留痕的问题，级别最低应定为「重大」。 确认以当前级别提交吗？（v1.1 回归 Playwright 实测） | — | EV-batch-v11 | 助理 |\n| TC-012 | 版本状态机流转 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-013 | 发布确认人≠实施人拦截 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-014 | bug 关联版本与计数 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-015 | 用例创建自动编号不复用 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-016 | 用例编辑升版 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-017 | 批准冻结：approved 编辑自动回草稿 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-018 | 执行记录 upsert：同用例同版本一条 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-019 | 按版本执行清单与统计 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-020 | 验收标准评论：徽标+过滤 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-021 | 枚举外类型回退普通 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-022 | 导出验收标准汇总列 | 通过 | v1.1 回归通过 | — | EV-batch-v11 | 助理 |\n| TC-023 | 图片上传压缩与门禁读取 | 通过 | 存储+门禁 ✓（压缩路径已责任方实传复核 491→245，#193） | — | EV-batch-v11 | 助理 |\n| TC-024 | 月度体积统计脚本 | 通过 | 统计输出正常 | — | EV-batch-v11 | 助理 |\n| TC-025 | 上传门禁：未登录拒绝 | 通过 | 匿名上传 401 | — | EV-batch-v11 | 助理 |\n| TC-036 | 级联删除：含 doc/release/用例的项目可整删 | 通过 | 级联整删+项目消失 | — | EV-batch-v11 | 助理 |\n| TC-037 | 级联保护：有需求的项目仍禁删 | 通过 | 有需求禁删 400 | — | EV-batch-v11 | 助理 |\n| TC-038 | docgen 三生成器产出 | 通过 | 三生成器 exit 0 | — | EV-batch-v11 | 助理 |\n| TC-039 | docgen 数据一致性抽核 | 通过 | 报告含基线用例、探针未混入 | — | EV-batch-v11 | 助理 |\n| TC-040 | 月度审查留痕三件 | 通过 | 标签留痕可检索（SOP id=3 已批准；评论已发） | — | EV-batch-v11 | 助理 |\n| TC-050 | 提单弹框化：需求池内弹框提单 | 偏差 | 弹框打开+表单交互 ✓，但自动化提交未建成单（postMessage 联动未触发，脚本与 iframe 时序问题待排查）。待责任方页面手动复核弹框提单全流程后关闭 | — | EV-batch-v11 | 助理 |\n| TC-051 | 幂等键：同 token 重复提交返回同单 | 通过 | 同 token 同单 202 | — | EV-batch-v11 | 助理 |\n\n## 三、用例步骤与预期（全文）\n\n### TC-001 文档创建与版本快照链（通过）\n\n**前置**：登录 story-pool 项目\n**步骤**：\n1. 新建文档（标题+初始内容）\n2. 编辑保存一次（改内容+填修订摘要）\n3. 打开版本历史，点击历史版本回看\n4. 返回当前版\n**预期**：每次保存版本+1 并落修订摘要；历史版本内容与当时一致可回看；返回当前版正常\n\n### TC-002 文档评论绑版本（通过）\n\n**前置**：存在多版本文档\n**步骤**：\n1. 在当前版本 vN 下发评论\n2. 文档编辑升版到 vN+1\n3. 回看该评论\n**预期**：评论显示\"针对 vN\"；升版后旧评论的版本标注不变\n\n### TC-003 文档三态流转与批准留痕（通过）\n\n**步骤**：\n1. 草稿→提交评审→批准\n2. 查看批准人与批准日期\n3. 批准后再编辑保存\n**预期**：批准落 approved_by/at 并显示\"批准 人 日期\"；批准后编辑自动回草稿且批准记录清空\n\n### TC-004 文档门禁：未登录拒绝（通过）\n\n**步骤**：匿名（无 cookie）访问 /docs.html 与 /api/docs\n**预期**：页面 302 跳登录；API 401 拒绝\n\n### TC-005 四维筛选导出与行数一致（通过）\n\n**步骤**：\n1. 列表按 项目+状态+类型+级别 组合筛选，记录条数\n2. 点「⬇ 导出」下载 CSV\n**预期**：CSV 数据行数与列表筛选结果一致；筛选条件正确作用于导出\n\n### TC-006 导出文件格式：BOM/表头/统计区（通过）\n\n**步骤**：检查导出 CSV 文件头与结构\n**预期**：UTF-8 BOM 开头（Excel 打开不乱码）；表头 11 列（编号…验收标准汇总）；尾部含 == 统计汇总 == 区（按状态/级别/根因/项目/类型计数）\n\n### TC-007 导出门禁：未登录拒绝（通过）\n\n**步骤**：匿名 GET /api/export\n**预期**：401 拒绝，不产出文件\n\n### TC-008 bug 建单带 severity/root_cause/ref_code（通过）\n\n**步骤**：\n1. 提单选类型 Bug→严重级别/根因/关联编号字段出现\n2. 填写提交\n3. 打开详情与编辑\n**预期**：字段入库且回显正确；编辑可修改\n\n### TC-009 ref_code 编号直达（通过）\n\n**步骤**：搜索框输入单据的关联编号（如 ISS-2026-001）\n**预期**：按 ref_code 精确命中并弹出该单抽屉\n\n### TC-010 severity 筛选含未定级（通过）\n\n**步骤**：\n1. 级别筛\"关键\"→仅关键单\n2. 级别筛\"未定级\"→仅 severity 为空的单\n**预期**：两种筛选结果均正确\n\n### TC-011 红线提示：低级别 bug 提交拦截确认（通过）\n\n**步骤**：提单选 Bug、严重级别选\"一般\"或\"观察\"，提交\n**预期**：弹出确认提示\"涉及权限/稽查轨迹/编号唯一性/数据更正留痕的问题最低应定重大\"；取消则不提交\n\n### TC-012 版本状态机流转（通过）\n\n**步骤**：\n1. 新建版本（规划中）→进入测试→转待再验证\n2. 换另一账号点发布确认→已发布→关闭\n**预期**：状态按序流转；发布确认记录确认人与时间\n\n### TC-013 发布确认人≠实施人拦截（通过）\n\n**步骤**：创建版本的原账号（实施人）对自己建的版本点\"发布确认\"\n**预期**：400 拒绝，提示\"发布确认人不能是实施人（创建人）本人\"\n\n### TC-014 bug 关联版本与计数（通过）\n\n**步骤**：\n1. 版本卡片点「🔗 关联 bug」输入 bug 编号\n2. 查看版本卡片计数\n**预期**：关联成功计数+1；重复关联不重复计数\n\n### TC-015 用例创建自动编号不复用（通过）\n\n**步骤**：\n1. 连续创建两条用例\n2. 删除第二条后再创建一条\n**预期**：TC 编号顺序递增；删除后新用例编号继续递增不复用已删编号\n\n### TC-016 用例编辑升版（通过）\n\n**步骤**：编辑用例步骤内容+修订摘要保存\n**预期**：版本+1；版本历史含新摘要；旧版本可回看\n\n### TC-017 批准冻结：approved 编辑自动回草稿（通过）\n\n**步骤**：\n1. 用例批准（approved_by 落人）\n2. 编辑内容保存\n**预期**：状态自动回 draft 且批准记录清空；版本历史保留批准时的版本\n\n### TC-018 执行记录 upsert：同用例同版本一条（通过）\n\n**步骤**：\n1. 对同一用例同一版本录入执行记录（通过）\n2. 再次录入（未通过+DEV 号）\n**预期**：仍只有一条记录，结果以最后一次为准，含 DEV 号\n\n### TC-019 按版本执行清单与统计（通过）\n\n**步骤**：\n1. 对多条用例分别录入通过/未通过/偏差\n2. 查看该版本的执行清单\n**预期**：清单完整；通过/未通过/偏差计数与录入一致\n\n### TC-020 验收标准评论：徽标+过滤（通过）\n\n**步骤**：\n1. 需求评论选类型\"验收标准\"发送\n2. \"只看类型\"筛验收标准\n**预期**：评论带徽标显示；过滤只留验收标准类\n\n### TC-021 枚举外类型回退普通（通过）\n\n**步骤**：接口提交 ctype=testcase（已移除的类型）\n**预期**：落库为普通评论（枚举外回退），不出现测试用例徽标\n\n### TC-022 导出验收标准汇总列（通过）\n\n**步骤**：需求含验收标准评论→导出 CSV\n**预期**：\"验收标准汇总\"列含该评论内容；普通评论不进该列\n\n### TC-023 图片上传压缩与门禁读取（通过）\n\n**步骤**：\n1. 上传 >300KB 图片\n2. 通过返回的 URL 读取\n**预期**：图片自动压缩至 300KB 内存储；登录态 URL 可访问；匿名读取被拒\n\n### TC-024 月度体积统计脚本（通过）\n\n**步骤**：运行 scripts/blob_stats.py\n**预期**：输出 BLOB 数量/总体积/最大单张/阈值百分比；超 3GB 时 exit 1 告警\n\n### TC-025 上传门禁：未登录拒绝（通过）\n\n**步骤**：匿名 POST /api/upload\n**预期**：401 拒绝\n\n### TC-036 级联删除：含 doc/release/用例的项目可整删（通过）\n\n**前置**：新建项目并创建 1 篇文档+1 个版本+1 条用例（需求为 0）\n**步骤**：\n1. 直接删除该项目\n2. 项目列表核对\n**预期**：删除成功；docs/releases/test_cases 全部级联消失（#196 修复前外键 500）\n\n### TC-037 级联保护：有需求的项目仍禁删（通过）\n\n**前置**：项目含至少 1 条需求\n**步骤**：尝试删除项目\n**预期**：400\"项目下仍有需求，不能删除\"（保护保留）\n\n### TC-038 docgen 三生成器产出（通过）\n\n**步骤**：依次运行 docgen.py csv14/report/rtm\n**预期**：三份 md 生成；report 执行统计与 release 卡片一致；csv14 含五维度统计\n\n### TC-039 docgen 数据一致性抽核（通过）\n\n**步骤**：随机抽 1 条 bug/1 条执行记录，比对生成物与池内数据\n**预期**：逐字段一致（生成快照=池内真相）\n\n### TC-040 月度审查留痕三件（通过）\n\n**步骤**：按 SOP id=3 执行一次月度审查（导出/清点/评论+标签留痕）\n**预期**：评论与标签（月度审查-YYYYMM）可检索；纪要归档\n\n### TC-050 提单弹框化：需求池内弹框提单（偏差）\n\n**步骤**：\n1. 需求列表页点「＋ 新需求」\n2. 弹框内完成提单（含截图）\n**预期**：弹框提单不跳页；成功后弹框关闭、列表刷新并自动打开新单抽屉\n\n### TC-051 幂等键：同 token 重复提交返回同单（通过）\n\n**步骤**：\n1. 同 client_token 连续两次创建需求\n2. 核对两次返回\n**预期**：第二次返回 dedup:true 且 id 与第一次相同（不建重单）\n\n## 四、未解决偏差与已知问题\n\n（按执行结果填写：deviation 项的关闭条件与责任方复核结论）\n\n## 五、发布建议\n\n（由执行统计与偏差评估得出：通过 / 有条件通过 / 不通过）\n\n## 六、偏差说明\n\n**DEV-TC-050（提单弹框联动）**：弹框打开与表单交互正常，自动化提交未走通（脚本与 iframe 时序问题）。关闭条件：责任方页面手动完成一次弹框提单全流程（提单成功且弹框自动关闭、列表刷新开新单抽屉）后关闭。\n\n## 七、已知问题（测试范围外发现，建议 v1.2 纳入）\n\n- apiProjectDelete 级联已修（#196），无新增已知问题。\n\n## 八、发布建议\n\n**通过**：32 条执行 31 通过 1 偏差（关闭条件明确且不影响已交付功能）。建议责任方完成 TC-050 页面复核后执行发布确认。\n",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-18T08:58:36.095Z",
+     "author": "晓"
+    }
+   ]
+  },
+  {
+   "id": 3,
+   "project_id": 3,
+   "title": "月度运营审查 SOP（R9）",
+   "current_version": 1,
+   "status": "approved",
+   "approved_by": 1,
+   "approved_at": "2026-10-18T08:30:45.323Z",
+   "created_by": 1,
+   "created_at": "2026-10-17T15:23:19.766Z",
+   "updated_at": "2026-10-18T08:30:45.323Z",
+   "author": "晓",
+   "project_name": "story-pool",
+   "content_md": "# 月度运营审查 SOP（R9 审查留痕）\n\n**节奏**：每月一次（建议月初 3 个工作日内审上月）｜**主持**：晓｜**参与**：韩立（出输入件）｜**依据**：CSV-14 定期审查 A 类（月度运营例会）+ GCP 53(四)定期审查\n\n## 一、输入件（韩立准备，三件齐才算完成）\n\n1. **问题清单导出**：`python3 scripts/docgen.py csv14 --project 3` → CSV-14 问题登记表（含五维度统计）\n2. **上月光伏统计**：`python3 scripts/blob_stats.py`（附件体积，超 3GB 告警）\n3. **超期与重复标注**：池内按标签筛上月新增，逐条看状态推进\n\n## 二、审查检查项（全量清点，不抽样）\n\n- [ ] 本月新增 bug 逐条过级（关键/重大/一般/观察 是否恰当；涉及权限/轨迹/编号/更正留痕的最低\"重大\"）\n- [ ] 超期未闭环项点名+原因\n- [ ] 重复现象标注关联号（同根因≥2 次触发系统性评估）\n- [ ] 级别复核：迎检发现不得为\"一般/观察\"\n\n## 三、结论落点（留痕三件）\n\n1. **评论留痕**：在 docgen 生成的问题登记表对应需求单下评论\"月度审查-YYYYMM：审查结论…\"\n2. **标签留痕**：涉及单据打标签 `月度审查-YYYYMM`\n3. **会议纪要**：审查记录（本文档复制一份，填结论+签认）→ 归档 CSV-14\n\n## 四、纪律\n\n- 审查发现问题**必须先登记（建单）再整改**，禁止\"改了就算审查通过\"\n- 审查结论只认记录与导出件，不认口头说明\n- 审查人不得同时是被审查对象的处置人本人\n- 输入件完整性：对账脚本未中途抛错（计数为 0 时先确认执行完整性再下\"无问题\"结论）\n\n## 五、年度收口\n\n12 次月度审查记录 + 池内台账 → 年度验证回顾（CSV-15 骨架，见 templates/csv/CSV-15-年度验证回顾.md）\n",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T15:23:19.766Z",
+     "author": "晓"
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "project_id": 3,
+   "title": "story-pool v1.0 版本测试报告（评审稿）",
+   "current_version": 1,
+   "status": "approved",
+   "approved_by": 1,
+   "approved_at": "2026-10-18T01:22:19.327Z",
+   "created_by": 1,
+   "created_at": "2026-10-17T14:32:30.196Z",
+   "updated_at": "2026-10-18T01:22:19.327Z",
+   "author": "晓",
+   "project_name": "story-pool",
+   "content_md": "# story-pool v1.0 版本测试报告\n\n**被测版本**：v1.0（release #1，八需求 #183-192 已全部 verified）｜**测试基线**：TC-001~025（已批准冻结，approved_by 晓）｜**执行**：agent（qwenpaw 实施身份），API 脚本实测 24 条 + Playwright 前端实测 2 条（含复测）｜**执行记录**：release v1.0 卡片\"执行清单\"\n\n## 一、执行统计\n\n| 结果 | 数量 | 说明 |\n|---|---|---|\n| 通过 | 24 | 含 3 条复测后通过（见偏差与注记） |\n| 偏差 | 1 | TC-023，待责任方页面复核后关闭 |\n| 未通过 | 0 | — |\n\n## 二、执行明细（按需求分组）\n\n| 需求 | 用例 | 结果 |\n|---|---|---|\n| #183 文档页 | TC-001 版本快照链 / TC-002 评论绑版本 / TC-003 三态+批准留痕 / TC-004 门禁 | 全部通过 |\n| #184 筛选导出 | TC-005 行数一致 / TC-006 BOM+表头+统计区 / TC-007 门禁 | 全部通过 |\n| #185 单据增强 | TC-008 字段入库 / TC-009 编号直达 / TC-010 筛选含未定级 / TC-011 红线弹框 | 全部通过 |\n| #186 releases | TC-012 状态机 / TC-013 确认人拦截 / TC-014 bug 关联计数 | 全部通过 |\n| #187 用例库 | TC-015 编号不复用 / TC-016 编辑升版 / TC-017 批准冻结 | 全部通过 |\n| #188 执行记录 | TC-018 upsert / TC-019 清单统计 | 全部通过 |\n| #189 评论类型 | TC-020 验收标准徽标过滤 / TC-021 枚举外回退 / TC-022 导出汇总列 | 全部通过 |\n| #192 图片治理 | TC-023 上传压缩 / TC-024 统计脚本 / TC-025 上传门禁 | 1 偏差 2 通过 |\n\n## 三、偏差（未关闭 1 项）\n\n**DEV-TC-023（图片上传压缩）**：Playwright 通道未捕获前端上传请求（自动化脚本与页面初始化时序问题）。前端压缩功能由历史真实使用 + verify 附件上传断言佐证有效。**关闭条件：责任方在页面（新建需求→截图上传 >300KB 图片）做一次上传复核，确认压缩生效后关闭本偏差。**\n\n## 四、测试过程发现并已修复\n\n1. **TC 编号复用（TC-015 初测捕获的真缺陷）**：MAX 法在删除尾部编号后复用编号，违反\"一经分配不复用\"。已修复（counters 持久计数器原子递增），复测 TC-029 删→TC-030 新建未复用。原 FAIL 结果保留于执行历史。\n2. 另发现（测试范围外）：apiProjectDelete 未级联清理 releases/test_cases——建过版本/用例的项目将无法删除。建议登记问题单、v1.1 修复。\n\n## 五、未解决偏差与已知问题评估\n\n- DEV-TC-023（1 项）：不阻塞发布，关闭条件明确（页面复核一次）\n- 已知问题：apiProjectDelete 级联（影响项目删除操作，不影响业务数据完整性）——建议 v1.1 修复并纳入回归\n\n## 六、发布建议\n\n**有条件通过**：25 条基线 24 通过 1 偏差，偏差关闭条件明确。建议责任方完成 TC-023 页面复核后执行发布确认（发布确认人≠实施人），版本转\"已发布\"。\n",
+   "versions": [
+    {
+     "version": 1,
+     "change_summary": "首版",
+     "created_at": "2026-10-17T14:32:30.196Z",
+     "author": "晓"
+    }
+   ]
+  }
+ ],
+ "stats": {
+  "requirements": 16,
+  "releases": 2,
+  "testcases": 33,
+  "docs": 3
+ }
+}
