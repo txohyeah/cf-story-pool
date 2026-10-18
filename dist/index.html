@@ -421,6 +421,14 @@ function renderInfo() {
   const dup = D.dup_of
     ? '<div style="margin-top:6px">↩️ 重复单，原单：<a href="javascript:void(0)" onclick="gotoReq(' + D.dup_of.id + ')">#' + D.dup_of.id
       + ' ' + esc(D.dup_of.title) + '</a></div>' : '';
+  const relsel = (relList.length || D.req.release_id)
+    ? '<div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+      + '<span style="font-size:13px">🚀 关联版本：</span>'
+      + '<select id="rel-sel" class="btn small" style="padding:3px 8px">'
+      + '<option value=""' + (D.req.release_id ? '' : ' selected') + '>未关联</option>'
+      + relList.map(x => '<option value="' + x.id + '"' + (D.req.release_id === x.id ? ' selected' : '') + '>v' + esc(x.version) + '（' + (x.status === 'published' ? '已发布' : x.status) + '）</option>').join('')
+      + '</select></div>'
+    : '';
   const rc = (D.related_cases && D.related_cases.length)
     ? '<div style="margin-top:10px"><strong style="font-size:13px">🧪 关联用例（' + D.related_cases.length + '）</strong>'
       + D.related_cases.map(c => '<div style="margin-top:4px"><a href="/testcases.html?project=' + r.project_id + '&tc=' + c.id
