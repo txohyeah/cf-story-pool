@@ -9,7 +9,7 @@
 <body>
 <div class="topbar">
   <a class="btn small" href="/index.html">📁 需求列表</a>
-  <a class="btn primary small" href="/new.html">＋ 新需求</a>
+  <a class="btn primary small" href="javascript:PoolUI.openNewReqModal($('proj-sel').value, function (id) { location.reload(); })">＋ 新需求</a>
   <span style="flex:1"></span>
   <a class="btn small" href="javascript:openPwdModal()">改密码</a>
   <a class="btn small" href="javascript:logout()">退出</a>
@@ -54,6 +54,7 @@
   </div>
 </div>
 
+<script src="/app-common.js"></script>
 <script>
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 async function api(path, opts) {

@@ -9,7 +9,7 @@
 <body>
 <div class="topbar">
   <a class="btn small" href="/index.html">📁 需求列表</a>
-  <a class="btn primary small" href="/new.html">＋ 新需求</a>
+  <a class="btn primary small" href="javascript:PoolUI.openNewReqModal($('proj-sel').value, function (id) { location.reload(); })">＋ 新需求</a>
   <span style="flex:1"></span>
   <a class="btn small" href="javascript:openPwdModal()">改密码</a>
   <a class="btn small" href="javascript:logout()">退出</a>
@@ -39,24 +39,9 @@
 </div>
 
 
-<!-- 改密码弹框（#197：当页 modal 不跳转） -->
-<div class="modal-overlay" id="pwd-overlay" style="display:none">
-  <div class="modal">
-    <h3>修改密码</h3>
-    <label>当前密码<input type="password" id="pw-cur" autocomplete="current-password"></label>
-    <label>新密码（至少 6 位）<input type="password" id="pw-new" autocomplete="new-password"></label>
-    <label>确认新密码<input type="password" id="pw-new2" autocomplete="new-password"></label>
-    <label class="pw-show"><input type="checkbox" id="pw-show" onchange="togglePwShow()"> 显示密码</label>
-    <div class="err" id="pw-err" style="margin:2px 0 0"></div>
-    <div class="modal-btns">
-      <button class="btn" onclick="closePwdModal()">取消</button>
-      <button class="btn primary" id="pw-save">保存</button>
-    </div>
-  </div>
-</div>
-
 <script src="/marked.min.js"></script>
 <script src="/purify.min.js"></script>
+<script src="/app-common.js"></script>
 <script>
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 async function api(path, opts) {
@@ -65,37 +50,7 @@ async function api(path, opts) {
   return r.json();
 }
 function logout() { fetch('/api/logout', { method: 'POST' }).then(() => location.href = '/login'); }
-function openPwdModal() {
-  $('pw-err').textContent = '';
-  $('pw-cur').value = ''; $('pw-new').value = ''; $('pw-new2').value = '';
-  $('pw-show').checked = false; togglePwShow();
-  $('pwd-overlay').style.display = 'flex';
-  $('pw-cur').focus();
-}
-function closePwdModal() { $('pwd-overlay').style.display = 'none'; }
-function togglePwShow() {
-  const t = $('pw-show').checked ? 'text' : 'password';
-  for (const id of ['pw-cur', 'pw-new', 'pw-new2']) $(id).type = t;
-}
-$('pw-save').onclick = async () => {
-  $('pw-err').textContent = '';
-  const cur = $('pw-cur').value, nxt = $('pw-new').value, nxt2 = $('pw-new2').value;
-  if (!cur) { $('pw-err').textContent = '请输入当前密码'; return; }
-  if (nxt.length < 6) { $('pw-err').textContent = '新密码至少 6 位'; return; }
-  if (nxt !== nxt2) { $('pw-err').textContent = '两次输入的新密码不一致'; return; }
-  $('pw-save').disabled = true;
-  try {
-    const d = await api('/api/me/password', { method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ current: cur, next: nxt }) });
-    if (d.ok) { closePwdModal(); return; }
-    $('pw-err').textContent = d.error || '修改失败';
-  } catch (e) { $('pw-err').textContent = '网络错误'; }
-  $('pw-save').disabled = false;
-};
-for (const id of ['pw-new', 'pw-new2']) {
-  $(id).addEventListener('keydown', e => { if (e.key === 'Enter') $('pw-save').click(); });
-}
+function openPwdModal() { PoolUI.openPwdModal(); }
 
 const ST = { draft: ['草稿', '#888', '#f2f2f2'], review: ['评审中', '#b45309', '#fef3c7'], approved: ['已批准', '#15803d', '#dcfce7'] };
 function stBadge(s) { const [t, fg, bg] = ST[s] || ST.draft; return `<span class="badge" style="color:${fg};background:${bg}">${t}</span>`; }
