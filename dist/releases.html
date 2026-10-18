@@ -11,6 +11,7 @@
   <a class="btn small" href="/index.html">📁 需求列表</a>
   <a class="btn primary small" href="javascript:PoolUI.openNewReqModal($('proj-sel').value, function (id) { location.reload(); })">＋ 新需求</a>
   <span style="flex:1"></span>
+  <select id="g-bar"></select>
   <a class="btn small" href="javascript:openPwdModal()">改密码</a>
   <a class="btn small" href="javascript:logout()">退出</a>
 </div>
@@ -74,6 +75,7 @@ function stBadge(s) { const [t, fg, bg] = RST[s] || RST.planning; return `<span 
 
 let me = null;
 async function init() {
+  PoolUI.renderProjectBar('g-bar', { defaultFirst: true, onChange: v => { location.href = '/releases.html?project=' + v; } });
   const m = await api('/api/me'); me = (m && m.authed) ? m.user_id : null;  // /api/me 返回 user_id（无 user 嵌套）
   const b = await api('/api/bootstrap');
   const projects = (b && b.projects) || [];
@@ -81,6 +83,7 @@ async function init() {
   sel.innerHTML = nsel.innerHTML = projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
   const want = new URLSearchParams(location.search).get('project');
   if (want && projects.some(p => String(p.id) === want)) { sel.value = want; nsel.value = want; }
+  PoolUI.setProject(sel.value);
   sel.onchange = () => { location.href = '/releases.html?project=' + sel.value; };
   $('btn-new-rel').onclick = () => { $('new-overlay').style.display = 'flex'; };
   await loadList();
