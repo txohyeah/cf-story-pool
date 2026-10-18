@@ -444,7 +444,7 @@ function renderInfo() {
       + (r.ref_code ? '<span>关联编号：' + esc(r.ref_code) + '</span>' : '')
       + '</div>' : '')
     + (r.description ? '<div style="margin-top:10px;white-space:pre-wrap">' + esc(r.description) + '</div>' : '')
-    + dup + relsel
+    + dup + relsel + rc
     + '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">'
     + '<button class="btn small" id="btn-edit">编辑</button>'
     + '<button class="btn small danger" id="btn-del">删除</button></div>';
