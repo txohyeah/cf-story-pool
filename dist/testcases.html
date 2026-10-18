@@ -82,7 +82,7 @@ async function init() {
   const projects = (b && b.projects) || [];
   $('proj-sel').innerHTML = $('n-proj').innerHTML = projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
   const SP = new URL(location.href).searchParams;
-  const want = SP.get('project');
+  const want = SP.get('project') || PoolUI.getProject();
   if (want && projects.some(p => String(p.id) === want)) { $('proj-sel').value = want; $('n-proj').value = want; }
   PoolUI.setProject($('proj-sel').value);
   $('proj-sel').onchange = () => { closeDetail(); loadList(); };
