@@ -126,6 +126,23 @@ $('files').addEventListener('change', async e => {
   e.target.value = '';
   renderThumbs();
 });
+// 截图直接 Command/Ctrl+V 粘贴上传（剪贴板中的图片进压缩管线，与手动上传同路）
+document.addEventListener('paste', async e => {
+  const items = (e.clipboardData || {}).items || [];
+  const imgs = [...items].filter(it => it.type && it.type.startsWith('image/'));
+  if (!imgs.length) return;
+  e.preventDefault(); // 剪贴板是图片时阻止默认粘贴行为
+  for (const it of imgs) {
+    if (files.length >= 3) { alert('最多 3 张'); break; }
+    const f = it.getAsFile();
+    if (!f) continue;
+    const named = new File([f], 'paste-' + Date.now() + '.png', { type: f.type || 'image/png' });
+    const c = await compressImage(named);
+    c._url = URL.createObjectURL(c);
+    files.push(c);
+  }
+  renderThumbs();
+});
 $('thumbs').addEventListener('click', e => {
   const i = e.target.dataset && e.target.dataset.i;
   if (i !== undefined && e.target.tagName === 'DIV') { files.splice(+i, 1); renderThumbs(); }
