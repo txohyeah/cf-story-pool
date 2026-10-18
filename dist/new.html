@@ -7,11 +7,17 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<div class="topbar">
+<div class="topbar" id="tb">
   <span class="brand">＋ 新需求</span>
   <span class="sp"></span>
-  <a class="btn small" href="javascript:history.length>1?history.back():location.href='/'">返回</a>
+  <a class="btn small" href="javascript:history.length>1?history.back():location.href='/'" id="tb-back">返回</a>
 </div>
+<script>
+  // #197：iframe 嵌入模式（需求池弹框提单）——隐藏顶栏，提交成功 postMessage 通知父页
+  if (window.parent !== window && new URLSearchParams(location.search).get('embed') === '1') {
+    document.addEventListener('DOMContentLoaded', () => { $('tb').style.display = 'none'; });
+  }
+</script>
 <div class="wrap" style="max-width:720px">
   <div class="card">
     <div class="fld-row">
@@ -164,6 +170,8 @@ $('go').onclick = async () => {
       attachments.push({ key: up.key, name: up.name, size: up.size });
     }
     $('go').textContent = '提交中…';
+    // #199 幂等键：同一提交会话复用同 token，网络抖动重试不建重
+    if (!window.__submitToken) window.__submitToken = crypto.randomUUID();
     const d = await api('/api/requirements', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -172,10 +180,17 @@ $('go').onclick = async () => {
         root_cause: $('type').value === 'bug' ? $('root-cause').value : '',
         ref_code: $('type').value === 'bug' ? $('ref-code').value.trim() : '',
         description: $('desc').value, type: $('type').value,
-        urgency: $('urgency').value, tags: [...tagSet], attachments
+        urgency: $('urgency').value, tags: [...tagSet], attachments,
+        client_token: window.__submitToken
       })
     });
-    if (d.ok) { location.href = '/index.html?project=' + $('project').value + '&req=' + d.id; return; }
+    if (d.ok) {
+      const createdId = d.id;
+      window.__submitToken = null;
+      // #197：iframe 嵌入模式（需求池弹框提单）通知父页；独立页保持跳转
+      if (window.parent !== window) { parent.postMessage({ type: 'req-created', id: createdId }, '*'); return; }
+      location.href = '/index.html?project=' + $('project').value + '&req=' + createdId; return;
+    }
     $('err').textContent = d.error || '提交失败';
   } catch (e) { $('err').textContent = e.message || '网络错误'; }
   $('go').disabled = false; $('go').textContent = '提 交';

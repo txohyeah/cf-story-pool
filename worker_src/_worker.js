@@ -348,11 +348,26 @@ async function apiReqCreate(request, env, u) {
   const refCode = String(body.ref_code || '').trim().slice(0, 60);
   const relatedCodes = JSON.stringify((Array.isArray(body.related_codes) ? body.related_codes : [])
     .map(x => String(x).trim().slice(0, 60)).filter(Boolean).slice(0, 20));
-  const ins = await env.DB.prepare(
-    `INSERT INTO requirements (project_id, title, description, type, urgency, status, channel, created_by, updated_at, severity, root_cause, ref_code, related_codes)
-     VALUES (?, ?, ?, ?, ?, 'submitted', 'web', ?, ?, ?, ?, ?, ?)`)
-    .bind(projectId, title, description, type, urgency, u.userId, nowIso(), severity, rootCause, refCode, relatedCodes).run();
-  const reqId = ins.meta.last_row_id;
+  // #199 幂等键：client_token 去重——网络抖动下同 token 重复提交返回已建单，不新建
+  const clientToken = String(body.client_token || '').trim().slice(0, 64) || null;
+  if (clientToken) {
+    const existed = (await env.DB.prepare('SELECT id FROM requirements WHERE client_token = ?').bind(clientToken).first());
+    if (existed) return json({ ok: true, id: existed.id, dedup: true });
+  }
+  try {
+    const ins = await env.DB.prepare(
+      `INSERT INTO requirements (project_id, title, description, type, urgency, status, channel, created_by, updated_at, severity, root_cause, ref_code, related_codes, client_token)
+       VALUES (?, ?, ?, ?, ?, 'submitted', 'web', ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(projectId, title, description, type, urgency, u.userId, nowIso(), severity, rootCause, refCode, relatedCodes, clientToken).run();
+    var reqId = ins.meta.last_row_id;
+  } catch (e) {
+    // 并发竞态兜底：UNIQUE 冲突说明同 token 已建成，查回返回
+    if (clientToken && String(e.message || '').includes('UNIQUE')) {
+      const existed = (await env.DB.prepare('SELECT id FROM requirements WHERE client_token = ?').bind(clientToken).first());
+      if (existed) return json({ ok: true, id: existed.id, dedup: true });
+    }
+    throw e;
+  }
   const stmts = [];
   for (const tid of tagIds) {
     stmts.push(env.DB.prepare('INSERT OR IGNORE INTO requirement_tags (req_id, tag_id) VALUES (?, ?)').bind(reqId, tid));

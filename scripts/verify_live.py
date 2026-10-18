@@ -488,6 +488,15 @@ def main():
                 s, d = jreq('DELETE', '/api/releases/%d' % rel2, cookie=cookie)
             s2, _h, _b = http('GET', '/testcases.html', headers={'Cookie': cookie})
             check('R5 用例页 200', s2 == 200)
+            # ---- #199 幂等键：同 client_token 两次创建返回同单 ----
+            tok = 'verify-idem-' + os.urandom(8).hex()
+            b1 = {'project_id': dpid, 'title': '[verify] 幂等探针', 'client_token': tok}
+            s, d = jreq('POST', '/api/requirements', b1, cookie=cookie)
+            idem_id = d.get('id')
+            s, d = jreq('POST', '/api/requirements', b1, cookie=cookie)
+            check('#199 幂等键去重', bool(idem_id) and d.get('dedup') and d.get('id') == idem_id)
+            if idem_id:
+                s, d = jreq('DELETE', '/api/requirements/%d' % idem_id, cookie=cookie)
             # ---- R7：评论类型（普通/验收标准；"测试用例"类型已移除防与用例库漂移）----
             s, d = jreq('POST', '/api/requirements', {'project_id': dpid, 'title': '[verify] R7探针', 'type': 'req'}, cookie=cookie)
             r7 = d.get('id')
