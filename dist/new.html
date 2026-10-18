@@ -58,10 +58,14 @@
       <datalist id="tag-list"></datalist>
       <div id="tags" style="margin-top:8px"></div>
     </label>
-    <label class="fld"><span>截图（可选，最多 3 张，自动压缩）</span>
-      <input type="file" id="files" accept="image/png,image/jpeg,image/webp,image/gif" multiple>
+    <div class="fld"><span>截图（可选，最多 3 张，自动压缩）</span>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+        <button class="btn small" type="button" onclick="document.getElementById('files').click()">选择文件</button>
+        <span class="sub" style="color:#888;font-size:12px">或直接 Command/Ctrl+V 粘贴截图</span>
+      </div>
+      <input type="file" id="files" accept="image/png,image/jpeg,image/webp,image/gif" multiple style="display:none">
       <div id="thumbs" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"></div>
-    </label>
+    </div>
     <button class="btn primary" id="go" style="width:100%">提 交</button>
     <div class="err" id="err"></div>
   </div>
