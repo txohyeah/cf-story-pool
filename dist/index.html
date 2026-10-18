@@ -267,6 +267,7 @@ function itemHtml(x) {
 // ---------- 状态快捷菜单（列表页直接改状态） ----------
 const SM_ORDER = ['submitted', 'confirmed', 'scheduled', 'fixed', 'verified', 'closed'];
 let statusMenuEl = null;
+let relList = [];  // 关联版本候选列表
 function closeStatusMenu() {
   if (statusMenuEl) { statusMenuEl.remove(); statusMenuEl = null; }
 }
@@ -369,6 +370,7 @@ async function loadReq(id) {
   if (curReqId !== id) return; // 加载期间已切到别的条
   if (!d.ok) { $('info').innerHTML = '<div class="err" style="padding:16px">' + esc(d.error || '加载失败') + '</div>'; return; }
   D = d;
+  relList = await api('/api/releases?project=' + D.req.project_id).then(x => x.items || []).catch(() => []);
   refreshDrawerDatalist(D.req.project_id); // 标签联想按需求所属项目
   renderInfo(); renderStatus(); renderTags(); renderChk(); renderAtts(); renderEvents();
   updateNavBtns();
@@ -442,7 +444,7 @@ function renderInfo() {
       + (r.ref_code ? '<span>关联编号：' + esc(r.ref_code) + '</span>' : '')
       + '</div>' : '')
     + (r.description ? '<div style="margin-top:10px;white-space:pre-wrap">' + esc(r.description) + '</div>' : '')
-    + dup + rc
+    + dup + relsel
     + '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">'
     + '<button class="btn small" id="btn-edit">编辑</button>'
     + '<button class="btn small danger" id="btn-del">删除</button></div>';
