@@ -929,6 +929,44 @@ async function apiDocDelete(request, env, u, id) {
   return json({ ok: true });
 }
 
+// ---------- 数据包导出（#201：项目全量上下文 JSON，agent/人员共用端点） ----------
+async function apiExportPackage(request, env, u) {
+  const url = new URL(request.url);
+  const pid = parseInt(url.searchParams.get('project'), 10);
+  if (!pid) return json({ error: '缺少 project' }, 400);
+  const proj = (await env.DB.prepare('SELECT id, name FROM projects WHERE id = ?').bind(pid).first());
+  if (!proj) return json({ error: '项目不存在' }, 404);
+  const reqs = (await env.DB.prepare('SELECT * FROM requirements WHERE project_id = ? ORDER BY id').bind(pid).all()).results;
+  const reqs_full = [];
+  for (const x of reqs) {
+    const ev = (await env.DB.prepare(
+      `SELECT e.detail, e.ctype, e.created_at, us.display_name AS actor FROM events e
+       LEFT JOIN users us ON us.id = e.actor_id WHERE e.req_id = ? AND e.action = 'comment' ORDER BY e.id`).bind(x.id).all()).results;
+    const tg = (await env.DB.prepare(
+      `SELECT t.name FROM requirement_tags rt JOIN tags t ON t.id = rt.tag_id WHERE rt.req_id = ? ORDER BY t.name`).bind(x.id).all()).results.map(r2 => r2.name);
+    reqs_full.push({ ...x, tags: tg, comments: ev });
+  }
+  const rels = (await env.DB.prepare('SELECT * FROM releases WHERE project_id = ? ORDER BY id').bind(pid).all()).results;
+  for (const rl of rels) {
+    rl.executions = (await env.DB.prepare(
+      `SELECT e.*, t.tc_code, t.title AS tc_title FROM tc_executions e
+       JOIN test_cases t ON t.id = e.tc_id WHERE e.release_id = ? ORDER BY t.tc_code`).bind(rl.id).all()).results;
+  }
+  const tcs = (await env.DB.prepare('SELECT * FROM test_cases WHERE project_id = ? ORDER BY tc_code').bind(pid).all()).results;
+  const docs = (await env.DB.prepare(
+    `SELECT d.*, us.display_name AS creator FROM docs d
+     LEFT JOIN users us ON us.id = d.created_by WHERE d.project_id = ? ORDER BY d.id`).bind(pid).all()).results;
+  for (const d of docs) {
+    const c = (await env.DB.prepare('SELECT content_md FROM doc_versions WHERE doc_id = ? AND version = ?')
+      .bind(d.id, d.current_version).first());
+    d.content_md = c ? c.content_md : '';
+  }
+  return json({
+    exported_at: nowIso(), project: proj,
+    requirements: reqs_full, releases: rels, testcases: tcs, docs
+  });
+}
+
 // ---------- R2 筛选导出（CSV，门禁内；CSV-14 五维度统计取数口） ----------
 async function apiExport(request, env, u) {
   const url = new URL(request.url);
@@ -1307,6 +1345,7 @@ export default {
       if (p === '/api/my-work') return apiMyWork(request, env, u);
       if (p === '/api/dedup-suggest') return apiDedup(request, env);
       if (p === '/api/export' && method === 'GET') return apiExport(request, env, u);
+      if (p === '/api/export-package' && method === 'GET') return apiExportPackage(request, env, u);
       if (p === '/api/releases' && method === 'GET') return apiRelList(request, env);
       if (p === '/api/releases' && method === 'POST') return apiRelCreate(request, env, u);
       const rlm = p.match(/^\/api\/releases\/(\d+)$/);

@@ -11,6 +11,7 @@
   <a class="btn small" href="/index.html">📁 需求列表</a>
   <a class="btn primary small" href="javascript:PoolUI.openNewReqModalForPage(3, function (id) { location.reload(); })">＋ 新需求</a>
   <span style="flex:1"></span>
+  <a class="btn small" href="javascript:location.href='/api/export-package?project=' + (PoolUI.getProject() || document.getElementById('proj-sel').value)">📦 数据包</a>
   <select id="g-bar"></select>
   <a class="btn small" href="javascript:openPwdModal()">改密码</a>
   <a class="btn small" href="javascript:logout()">退出</a>

@@ -32,3 +32,14 @@ python3 tools/publish-web/pw.py deploy --name cf-story-pool --dir projects/cf-st
 - 去重：提单页标题防抖 400ms → FTS5 全文 MATCH 开放状态单 TOP5；列表搜索同源
 - 时间一律 UTC ISO 存储，前端 toLocaleString 展示；事件流水 events 记录 create/status/edit/tag/checklist/comment，评论原文存 events.detail
 - 删除需求为硬删（含子表 + 附件 BLOB + 解除重复引用），仅用于误录/清理
+
+## 数据包导出 API（给外部 agent/自动化）
+
+登录后（cookie `storypool_auth`）调用：
+
+```
+GET /api/export-package?project=<项目id>
+```
+
+返回项目全量上下文 JSON：`requirements`（含 tags/comments 全文）、`releases`（含执行记录与统计）、`testcases`（含 steps_md 全文/版本/执行）、`docs`（含当前 content_md）、`project`。外部 agent 由管理员发放 pool 账号即可调用；页面顶栏「📦 数据包」按钮为同一数据的下载入口。
+

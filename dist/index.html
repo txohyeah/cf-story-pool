@@ -17,6 +17,7 @@
   <a class="btn small" href="javascript:exportCsv()" id="btn-export">⬇ 导出</a>
   <span class="sp"></span>
   <span class="sub" id="who"></span>
+  <a class="btn small" href="javascript:location.href='/api/export-package?project=' + (PoolUI.getProject() || $('f-project').value || 3)">📦 数据包</a>
   <select id="g-bar" title="全局项目"></select>
   <a class="btn small" href="javascript:openPwdModal()">改密码</a>
   <a class="btn small" href="javascript:logout()">退出</a>
