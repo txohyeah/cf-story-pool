@@ -11,6 +11,7 @@
   <a class="btn small" href="/index.html">📁 需求列表</a>
   <a class="btn primary small" href="javascript:PoolUI.openNewReqModal($('proj-sel').value, function (id) { location.reload(); })">＋ 新需求</a>
   <span style="flex:1"></span>
+  <select id="g-bar"></select>
   <a class="btn small" href="javascript:openPwdModal()">改密码</a>
   <a class="btn small" href="javascript:logout()">退出</a>
 </div>
@@ -39,6 +40,7 @@
 </div>
 
 
+<script src="/app-common.js"></script>
 <script src="/marked.min.js"></script>
 <script src="/purify.min.js"></script>
 <script src="/app-common.js"></script>
@@ -57,12 +59,14 @@ function stBadge(s) { const [t, fg, bg] = ST[s] || ST.draft; return `<span class
 
 let projects = [];
 async function init() {
+  PoolUI.renderProjectBar('g-bar', { defaultFirst: true, onChange: v => { location.href = '/docs.html?project=' + v; } });
   const b = await api('/api/bootstrap');
   projects = (b && b.projects) || [];
   const sel = $('proj-sel'), nsel = $('n-proj');
   sel.innerHTML = nsel.innerHTML = projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
   const want = new URLSearchParams(location.search).get('project');
   if (want && projects.some(p => String(p.id) === want)) { sel.value = want; nsel.value = want; }
+  PoolUI.setProject(sel.value);
   sel.onchange = () => { location.href = '/docs.html?project=' + sel.value; };
   $('btn-new-doc').onclick = () => { $('new-overlay').style.display = 'flex'; };
   await loadList();

@@ -19,6 +19,7 @@
   <a class="btn small" href="/index.html">📁 需求列表</a>
   <a class="btn primary small" href="javascript:PoolUI.openNewReqModal($('proj-sel').value, function (id) { location.href = '/testcases.html?project=' + $('proj-sel').value; })">＋ 新需求</a>
   <span style="flex:1"></span>
+  <select id="g-bar"></select>
   <a class="btn small" href="javascript:openPwdModal()">改密码</a>
   <a class="btn small" href="javascript:logout()">退出</a>
 </div>
@@ -55,6 +56,7 @@
 </div>
 
 <script src="/app-common.js"></script>
+<script src="/app-common.js"></script>
 <script>
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 async function api(path, opts) {
@@ -74,6 +76,7 @@ const RES = { pass: ['通过', '#15803d', '#dcfce7'], fail: ['未通过', '#b91c
               deviation: ['偏差', '#c2410c', '#ffedd5'], '': ['未执行', '#888', '#f2f2f2'] };
 
 async function init() {
+  PoolUI.renderProjectBar('g-bar', { defaultFirst: true, onChange: v => { location.href = '/testcases.html?project=' + v; } });
   const m = await api('/api/me'); me = (m && m.authed) ? m.user_id : null;  // /api/me 返回 user_id
   const b = await api('/api/bootstrap');
   const projects = (b && b.projects) || [];
@@ -81,6 +84,7 @@ async function init() {
   const SP = new URL(location.href).searchParams;
   const want = SP.get('project');
   if (want && projects.some(p => String(p.id) === want)) { $('proj-sel').value = want; $('n-proj').value = want; }
+  PoolUI.setProject($('proj-sel').value);
   $('proj-sel').onchange = () => { closeDetail(); loadList(); };
   $('btn-new-tc').onclick = () => { $('new-overlay').style.display = 'flex'; refreshReqOptions(); };
   await loadList();

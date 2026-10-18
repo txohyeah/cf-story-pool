@@ -15,6 +15,7 @@
   <a class="btn small" href="/releases.html" id="btn-rel">🚀 版本</a>
   <a class="btn small" href="/testcases.html" id="btn-tc">🧪 用例</a>
   <a class="btn small" href="javascript:exportCsv()" id="btn-export">⬇ 导出</a>
+  <select id="g-bar"></select>
   <span class="sp"></span>
   <span class="sub" id="who"></span>
   <a class="btn small" href="javascript:openPwdModal()">改密码</a>
@@ -199,6 +200,7 @@
   </aside>
 </div>
 
+<script src="/app-common.js"></script>
 <script src="/app-common.js"></script>
 <script>
 const $ = id => document.getElementById(id);
@@ -800,7 +802,7 @@ for (const id of ['f-project', 'f-status', 'f-type', 'f-urgency', 'f-severity', 
   $(id).addEventListener('change', () => { page = 1; loadList(); if ($('mw-sync').checked) loadMyWork(); });
 }
 // 项目切换 → 标签选项按项目过滤（标签与项目隔离）
-$('f-project').addEventListener('change', () => refreshTagFilter());
+$('f-project').addEventListener('change', () => { PoolUI.setProject($('f-project').value); refreshTagFilter(); });
 $('mw-sync').addEventListener('change', () => loadMyWork());
 
 // bfcache 后退恢复时强制重拉数据，避免详情页改过的状态显示旧值
@@ -821,6 +823,7 @@ window.addEventListener('pagehide', () => {
 (async function init() {
   // me 与 bootstrap 并行，省一个往返
   const pBoot = api('/api/bootstrap');
+  PoolUI.renderProjectBar('g-bar', { allowAll: true, onChange: v => { location.href = v ? '/index.html?project=' + v : '/index.html?project=all'; } });
   const m = await api('/api/me');
   if (!m.authed) { location.href = '/login'; return; }
   me = m;
