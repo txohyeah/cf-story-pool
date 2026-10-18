@@ -118,6 +118,7 @@
     <div class="card" id="edit-card" style="display:none">
       <h3>✏️ 编辑</h3>
       <label class="fld"><span>标题</span><input type="text" id="e-title" maxlength="200"></label>
+      <div class="sub" style="font-size:12px;color:#666;margin-bottom:6px">当前状态：<span id="e-cur-status"></span>（状态变更请用下方「状态流转」）</div>
       <label class="fld"><span>描述 / 复现步骤</span><textarea id="e-desc" rows="5"></textarea></label>
       <div class="fld-row">
         <label class="fld"><span>项目</span><select id="e-project"></select></label>
@@ -464,6 +465,7 @@ function renderInfo() {
       $('e-severity').value = r.severity || '';
       $('e-root-cause').value = r.root_cause || '';
       $('e-ref-code').value = r.ref_code || '';
+      $('e-cur-status').innerHTML = '<span class="badge st-' + r.status + '">' + (ST[r.status] || r.status) + '</span>';
       setSel('e-project', String(r.project_id));
       $('e-err').textContent = '';
     }
@@ -479,9 +481,10 @@ function renderInfo() {
 
 function renderStatus() {
   const cur = D.req.status;
-  const opts = Object.keys(ST).filter(s => s !== cur)
+  // #195：首项为禁用的当前状态占位——打开下拉即可见当前状态，避免误读"默认待确认"
+  $('s-next').innerHTML = '<option value="" disabled selected>当前：' + (ST[cur] || cur) + '（选择要移动到的状态）</option>'
+    + Object.keys(ST).filter(s => s !== cur)
     .map(s => '<option value="' + s + '">' + ST[s] + '</option>').join('');
-  $('s-next').innerHTML = opts;
   $('dup-row').style.display = 'none';
   $('s-note').value = ''; $('s-dup').value = ''; $('s-err').textContent = '';
 }
