@@ -92,7 +92,9 @@
 
 <!-- 新需求提单弹框（#197：iframe 承载 new.html 全功能） -->
 <div class="modal-overlay" id="nr-overlay" style="display:none">
-  <div class="modal" style="width:min(700px,94vw);height:min(88vh,800px);padding:0;overflow:hidden">
+  <div class="modal" style="position:relative;width:min(700px,94vw);height:min(88vh,800px);padding:0;overflow:hidden">
+    <button onclick="closeNewReqModal()" title="关闭（提单内容将丢失）"
+      style="position:absolute;top:8px;right:10px;z-index:10;border:1px solid var(--line);background:#fff;border-radius:6px;padding:2px 10px;cursor:pointer;font-size:14px">✕ 关闭</button>
     <iframe id="nr-frame" style="width:100%;height:100%;border:0" src=""></iframe>
   </div>
 </div>
