@@ -10,6 +10,7 @@ body { margin: 0; background: var(--bg); color: var(--txt);
   font: 15px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
 a { color: var(--blue); text-decoration: none; }
 .topbar { background: var(--card); border-bottom: 1px solid var(--line);
+  flex-wrap: nowrap; overflow-x: auto;
   padding: 10px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   position: sticky; top: 0; z-index: 40; box-shadow: 0 2px 8px rgba(15, 23, 42, .06); }
 .topbar .brand { font-weight: 700; font-size: 17px; color: var(--txt); }
@@ -159,3 +160,5 @@ label.fld > span { display: block; font-size: 13px; color: var(--sub); margin-bo
   .drawer { padding: 0 10px 20px; }
   .drawer-head { margin: 0 -10px 10px; padding: 10px 10px 8px; }
 }
+
+.topbar select { width: auto; max-width: 170px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); font-size: 13px; }
