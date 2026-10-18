@@ -40,6 +40,20 @@
   </div>
 </div>
 
+
+<!-- 关联 bug 弹框（#197：prompt 改 modal） -->
+<div class="modal-overlay" id="link-overlay" style="display:none">
+  <div class="modal">
+    <h3>关联 bug 到版本</h3>
+    <label>bug 编号<input type="text" id="lb-id" maxlength="20" placeholder="纯数字，如 104"></label>
+    <div class="err" id="lb-err" style="color:#b91c1c;font-size:13px;margin:4px 0 0"></div>
+    <div class="modal-btns" style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+      <button class="btn" onclick="closeLinkModal()">取消</button>
+      <button class="btn primary" id="lb-ok">确认关联</button>
+    </div>
+  </div>
+</div>
+
 <script>
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 async function api(path, opts) {
@@ -104,19 +118,27 @@ async function setStatus(id, st) {
   if (!r.ok) alert(r.error || '操作失败');
   loadList();
 }
-async function linkBug(relId) {
-  const raw = prompt('输入要关联到该版本的 bug 编号（纯数字，如 104）：');
-  if (!raw) return;
-  const bid = parseInt(raw.replace(/[^0-9]/g, ''), 10);
-  if (!bid) { alert('编号无效'); return; }
+let linkRelId = null;
+function linkBug(relId) {
+  linkRelId = relId;
+  $('lb-id').value = ''; $('lb-err').textContent = '';
+  $('link-overlay').style.display = 'flex';
+  $('lb-id').focus();
+}
+function closeLinkModal() { $('link-overlay').style.display = 'none'; }
+$('lb-ok').onclick = async () => {
+  const bid = parseInt(($('lb-id').value || '').replace(/[^0-9]/g, ''), 10);
+  if (!bid) { $('lb-err').textContent = '编号无效'; return; }
   const chk = await api('/api/requirements/' + bid);
-  if (!chk.ok) { alert('需求不存在'); return; }
+  if (!chk.ok) { $('lb-err').textContent = '需求不存在'; return; }
   const r = await api('/api/requirements/' + bid, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ op: 'edit', release_id: relId })
+    body: JSON.stringify({ op: 'edit', release_id: linkRelId })
   });
-  if (r.ok) loadList(); else alert(r.error || '关联失败');
-}
+  if (r.ok) { closeLinkModal(); loadList(); }
+  else $('lb-err').textContent = r.error || '关联失败';
+};
+$('lb-id').addEventListener('keydown', e => { if (e.key === 'Enter') $('lb-ok').click(); });
 $('n-save').onclick = async () => {
   const version = $('n-version').value.trim();
   if (!version) { $('n-err').textContent = '版本号必填'; $('n-err').style.display = 'block'; return; }
