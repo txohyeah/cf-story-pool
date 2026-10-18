@@ -10,7 +10,7 @@
 <div class="topbar">
   <span class="brand" style="cursor:pointer" onclick="goHome()">📥 需求池</span>
   <a class="btn small" href="/index.html" id="btn-home" style="display:none">📁 项目列表</a>
-  <a class="btn primary small" href="javascript:PoolUI.openNewReqModal($('f-project').value || 3, function (id) { page = 1; loadList(); openReq(id); })" id="btn-new">＋ 新需求</a>
+  <a class="btn primary small" href="javascript:PoolUI.openNewReqModalForPage(3, function (id) { page = 1; loadList(); openReq(id); })" id="btn-new">＋ 新需求</a>
   <a class="btn small" href="/docs.html" id="btn-docs">📄 文档</a>
   <a class="btn small" href="/releases.html" id="btn-rel">🚀 版本</a>
   <a class="btn small" href="/testcases.html" id="btn-tc">🧪 用例</a>

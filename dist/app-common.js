@@ -109,23 +109,33 @@
   // ---------- 全局项目条（#200：顶栏选择器，localStorage 持久，全站联动） ----------
   UI.renderProjectBar = function (containerId, opts) {
     opts = opts || {};
-    const sel = document.getElementById(containerId);
-    if (!sel) return;
-    sel.style.padding = '4px 8px';
-    sel.style.fontSize = '13px';
-    api('/api/projects').then(d => {
-      const projects = (d && d.projects) || [];
-      let cur = UI.getProject();
-      if (!cur && opts.defaultFirst && projects.length) { UI.setProject(projects[0].id); cur = String(projects[0].id); }
-      let html = '';
-      if (opts.allowAll !== false) html += '<option value=""' + (cur === '' ? ' selected' : '') + '>全部项目</option>';
-      html += projects.map(x => '<option value="' + x.id + '"' + (String(x.id) === cur ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('');
-      sel.innerHTML = html;
-      sel.addEventListener('change', () => {
-        UI.setProject(sel.value);
-        if (opts.onChange) opts.onChange(sel.value);
+    const render = () => {
+      const sel = document.getElementById(containerId);
+      if (!sel) { setTimeout(render, 300); return; } // DOM 未就绪时重试
+      sel.style.padding = '4px 8px';
+      sel.style.fontSize = '13px';
+      api('/api/projects').then(d => {
+        const projects = (d && d.projects) || [];
+        let cur = UI.getProject();
+        if (!cur && opts.defaultFirst && projects.length) { UI.setProject(projects[0].id); cur = String(projects[0].id); }
+        let html = '';
+        if (opts.allowAll !== false) html += '<option value=""' + (cur === '' ? ' selected' : '') + '>全部项目</option>';
+        html += projects.map(x => '<option value="' + x.id + '"' + (String(x.id) === cur ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('');
+        sel.innerHTML = html;
+        sel.addEventListener('change', () => {
+          UI.setProject(sel.value);
+          if (opts.onChange) opts.onChange(sel.value);
+        });
       });
-    });
+    };
+    render();
+  };
+
+  // 页面按钮入口：组件自治，不依赖页面全局函数（#197 修正——原 href 内联 $() 依赖页面局部变量不可达）
+  UI.openNewReqModalForPage = function (fallbackProjectId, onCreated) {
+    const el = document.getElementById('f-project') || document.getElementById('proj-sel');
+    const pid = (el && el.value) ? el.value : (UI.getProject() || fallbackProjectId || 3);
+    UI.openNewReqModal(pid, onCreated);
   };
 
   // ---------- 提单弹框（原生表单组件：压缩/粘贴上传/幂等键/bug 字段） ----------
@@ -199,6 +209,7 @@
 
     const $ = sel => ov.querySelector(sel);
     ov.__files = [];
+    const close = () => closeOverlay('nr-overlay');
 
     // 项目下拉：全局上下文优先，无则传入值
     api('/api/projects').then(d => {
@@ -211,7 +222,6 @@
       $('nr-bug-fields').style.display = $('nr-type').value === 'bug' ? '' : 'none';
     });
     // 文件选择
-    $('nr-pick').onclick = () => $('nr-files').click();
     $('nr-files').addEventListener('change', async e => {
       for (const f of e.target.files) {
         if (ov.__files.length >= 3) { alert('最多 3 张'); break; }
@@ -227,10 +237,11 @@
       const i = e.target.dataset && e.target.dataset.i;
       if (i !== undefined) { ov.__files.splice(parseInt(i, 10), 1); renderNrThumbs(ov); }
     });
-    // 关闭
-    const close = () => closeOverlay('nr-overlay');
-    $('nr-cancel').onclick = close;
-    ov.addEventListener('click', e => { if (e.target === ov) close(); });
+    // 关闭与全部按钮：事件委托（元素缺失也不影响取消）
+    ov.addEventListener('click', e => {
+      if (e.target === ov || e.target.id === 'nr-cancel') { close(); return; }
+      if (e.target.id === 'nr-pick') $('nr-files').click();
+    });
     // 提交（幂等 token）
     $('nr-submit').onclick = async () => {
       const err = $('nr-err');
