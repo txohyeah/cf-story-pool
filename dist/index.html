@@ -462,6 +462,13 @@ function renderInfo() {
       $('e-err').textContent = '';
     }
   };
+  $('rel-sel').addEventListener('change', async e => {
+    const v = e.target.value;
+    const r = await api('/api/requirements/' + curReqId, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op: 'edit', release_id: v || null }) });
+    if (r.ok) loadReq(curReqId); else alert(r.error || '关联失败');
+  });
   $('btn-del').onclick = async () => {
     if (!confirm('确定删除需求 #' + r.id + '？不可恢复')) return;
     if (!confirm('再次确认：删除后截图附件一并清除')) return;
