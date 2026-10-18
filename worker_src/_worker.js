@@ -650,6 +650,7 @@ async function apiReqDelete(request, env, u, id) {
   const atts = (await env.DB.prepare('SELECT store_key FROM attachments WHERE req_id = ?').bind(id).all()).results;
   const stmts = [
     env.DB.prepare('UPDATE requirements SET duplicate_of = NULL WHERE duplicate_of = ?').bind(id),
+    env.DB.prepare('UPDATE test_cases SET related_req = NULL WHERE related_req = ?').bind(id), // #196 同型缺口：用例关联引用未清致删除外键失败
     env.DB.prepare('DELETE FROM requirement_tags WHERE req_id = ?').bind(id),
     env.DB.prepare('DELETE FROM attachments WHERE req_id = ?').bind(id),
     env.DB.prepare('DELETE FROM checklist_items WHERE req_id = ?').bind(id),
