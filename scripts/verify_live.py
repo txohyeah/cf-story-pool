@@ -515,13 +515,24 @@ def main():
                 for nm in ('R7 评论类型入库', 'R7 导出验收标准汇总(ctype=ac口径)'):
                     check(nm, False, 'r7 缺失')
         s, d = jreq('DELETE', '/api/projects/%d' % dpid, cookie=cookie)
-        s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
-        still = [p for p in d2.get('projects', []) if p['id'] == dpid]
+        # 删除确认容忍 D1 读副本滞后：still 时延迟重查最多 3 次
+        still = None
+        for _ in range(4):
+            s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
+            still = [p for p in d2.get('projects', []) if p['id'] == dpid]
+            if not still:
+                break
+            time.sleep(2)
         if still:
             # 抖动兜底：删除未生效则按 id 再删一次（非幂等删除不盲重试，先查回确认）
             s, d = jreq('DELETE', '/api/projects/%d' % dpid, cookie=cookie)
-            s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
-            still = [p for p in d2.get('projects', []) if p['id'] == dpid]
+            still = None
+            for _ in range(3):
+                s2, d2 = jreq('GET', '/api/projects', cookie=cookie)
+                still = [p for p in d2.get('projects', []) if p['id'] == dpid]
+                if not still:
+                    break
+                time.sleep(2)
         check('文档测试项目清理闭环', not still)
         # ---- #196 级联删除：带 docs/releases/test_cases 的项目可直接删 ----
         s, d = jreq('POST', '/api/projects', {'name': '[verify] 级联项目'}, cookie=cookie)
