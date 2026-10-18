@@ -853,7 +853,12 @@ window.addEventListener('pagehide', () => {
     // 列表模式：URL 指定项目（all = 全部）；带 req 深链时也进列表模式并自动弹抽屉
     $('view-list').style.display = '';
     $('btn-home').style.display = ''; // 顶栏显式返回项目列表入口（点 logo 回首页太隐晦）
-    setSel('f-project', URL_PROJECT && URL_PROJECT !== 'all' ? URL_PROJECT : '');
+    if (!URL_PROJECT || URL_PROJECT === 'all') {
+      const gp = PoolUI.getProject();
+      if (gp) setSel('f-project', gp);
+    } else {
+      setSel('f-project', URL_PROJECT);
+    }
     setSel('f-status', SP.has('status') ? SP.get('status') : 'open'); // 默认只看未关闭
     if (SP.has('type')) setSel('f-type', SP.get('type'));
     if (SP.has('urgency')) setSel('f-urgency', SP.get('urgency'));

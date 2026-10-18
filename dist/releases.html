@@ -81,7 +81,7 @@ async function init() {
   const projects = (b && b.projects) || [];
   const sel = $('proj-sel'), nsel = $('n-proj');
   sel.innerHTML = nsel.innerHTML = projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
-  const want = new URLSearchParams(location.search).get('project');
+  const want = new URLSearchParams(location.search).get('project') || PoolUI.getProject();
   if (want && projects.some(p => String(p.id) === want)) { sel.value = want; nsel.value = want; }
   PoolUI.setProject(sel.value);
   sel.onchange = () => { location.href = '/releases.html?project=' + sel.value; };
