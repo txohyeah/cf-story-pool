@@ -473,7 +473,10 @@ function renderInfo() {
       $('e-err').textContent = '';
     }
   };
-  $('rel-sel').addEventListener('change', async e => {
+  // rel-sel 是条件渲染的（无关联版本且项目下无 releases 时元素不存在），
+  // 绑定必须判空，否则 TypeError 中断渲染链：标签/工作项/附件/评论全部不渲染（#200 回归 bug）
+  const relEl = $('rel-sel');
+  if (relEl) relEl.addEventListener('change', async e => {
     const v = e.target.value;
     const r = await api('/api/requirements/' + curReqId, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
