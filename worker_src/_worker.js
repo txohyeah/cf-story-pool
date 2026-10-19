@@ -419,6 +419,8 @@ async function apiReqList(request, env, u) {
       WHERE rt.req_id = r.id AND t.name = ?)`);
     args.push(tag);
   }
+  const release = parseInt(url.searchParams.get('release'), 10);
+  if (release) { where.push('r.release_id = ?'); args.push(release); }
   const q = (url.searchParams.get('q') || '').trim();
   if (q) {
     const tokens = qTokens(q);
@@ -439,11 +441,12 @@ async function apiReqList(request, env, u) {
     `SELECT COUNT(*) AS n FROM requirements r ${W}`).bind(...args).first()).n;
   const items = (await env.DB.prepare(
     `SELECT r.id, r.title, r.type, r.urgency, r.status, r.created_at, r.updated_at,
-            r.severity, r.root_cause, r.ref_code,
+            r.severity, r.root_cause, r.ref_code, r.release_id, rl.version AS release_version,
             p.name AS project_name, us.display_name AS creator_name
      FROM requirements r
      JOIN projects p ON p.id = r.project_id
      LEFT JOIN users us ON us.id = r.created_by
+     LEFT JOIN releases rl ON rl.id = r.release_id
      ${W} ORDER BY r.updated_at DESC, r.id DESC LIMIT ? OFFSET ?`)
     .bind(...args, pageSize, (page - 1) * pageSize).all()).results;
   const ids = items.map(x => x.id);
@@ -502,6 +505,8 @@ async function apiMyWork(request, env, u) {
       WHERE rt.req_id = r.id AND t.name = ?)`);
     args.push(tag);
   }
+  const release = parseInt(url.searchParams.get('release'), 10);
+  if (release) { where.push('r.release_id = ?'); args.push(release); }
   const q = (url.searchParams.get('q') || '').trim();
   if (q) {
     const tokens = qTokens(q);
@@ -990,13 +995,17 @@ async function apiExport(request, env, u) {
       WHERE rt.req_id = r.id AND t.name = ?)`);
     args.push(tag);
   }
+  const release = parseInt(url.searchParams.get('release'), 10);
+  if (release) { where.push('r.release_id = ?'); args.push(release); }
   const W = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const rows = (await env.DB.prepare(
     `SELECT r.id, r.title, r.type, r.urgency, r.status, r.severity, r.root_cause, r.ref_code,
-            r.created_at, us.display_name AS creator, p.name AS project_name
+            r.created_at, us.display_name AS creator, p.name AS project_name,
+            rl.version AS release_version
      FROM requirements r
      JOIN projects p ON p.id = r.project_id
      LEFT JOIN users us ON us.id = r.created_by
+     LEFT JOIN releases rl ON rl.id = r.release_id
      ${W} ORDER BY r.id ASC LIMIT 5000`).bind(...args).all()).results;
   const ids = rows.map(x => x.id);
   const acMap = new Map();
@@ -1016,12 +1025,14 @@ async function apiExport(request, env, u) {
   const RC = { config: '配置', defect: '缺陷', usage: '使用', external: '外部依赖', data: '数据', requirement: '需求有误' };
   const TY = { bug: 'bug', req: '需求', opt: '优化' };
   const ST = { submitted: '待复现', confirmed: '已确认', scheduled: '已排期', fixed: '已修复', verified: '已验证', closed: '关闭', dup_closed: '重复关闭' };
+  const FV = v => { v = String(v || ''); return /^[vV]/.test(v) ? v : 'v' + v; };
   const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""').replace(/\r?\n/g, '\\n') + '"';
-  const lines = [['编号','标题','类型','状态','紧急度','严重级别','根因分类','提单人','创建日期','关联编号','验收标准汇总'].map(cell).join(',')];
+  const lines = [['编号','标题','类型','状态','紧急度','严重级别','根因分类','提单人','创建日期','关联编号','关联版本','验收标准汇总'].map(cell).join(',')];
   for (const x of rows) {
     lines.push([x.id, x.title, TY[x.type] || x.type, ST[x.status] || x.status,
       x.urgency === 'urgent' ? '紧急' : '一般', SEV[x.severity] || '', RC[x.root_cause] || '',
       x.creator || '', (x.created_at || '').slice(0, 10), x.ref_code || '',
+      x.release_version ? FV(x.release_version) : '',
       (acMap.get(x.id) || []).join(' ||| ')].map(cell).join(','));
   }
   const cnt = key => {
@@ -1036,6 +1047,7 @@ async function apiExport(request, env, u) {
     ['按严重级别', cnt(x => SEV[x.severity] || '未定级')],
     ['按根因分类', cnt(x => RC[x.root_cause] || '未填')],
     ['按项目', cnt(x => x.project_name)],
+    ['按版本', cnt(x => x.release_version ? FV(x.release_version) : '未关联')],
     ['按类型', cnt(x => TY[x.type] || x.type)]
   ];
   for (const [k, v] of stats) lines.push([cell(k), cell(v)].join(','));
@@ -1053,12 +1065,21 @@ const RELEASE_STATUSES = ['planning', 'testing', 'reverify', 'published', 'close
 async function apiRelList(request, env) {
   const url = new URL(request.url);
   const pid = parseInt(url.searchParams.get('project'), 10);
-  if (!pid) return json({ error: '缺少 project' }, 400);
+  // project 可选：传了 = 某项目版本单（releases.html 用）；不传 = 全部项目版本（列表页版本过滤下拉用）
+  if (pid) {
+    const items = (await env.DB.prepare(
+      `SELECT rl.*, u.display_name AS creator,
+              (SELECT COUNT(*) FROM requirements r WHERE r.release_id = rl.id) AS bug_count
+       FROM releases rl LEFT JOIN users u ON u.id = rl.created_by
+       WHERE rl.project_id = ? ORDER BY rl.id DESC`).bind(pid).all()).results;
+    return json({ ok: true, items });
+  }
   const items = (await env.DB.prepare(
-    `SELECT rl.*, u.display_name AS creator,
+    `SELECT rl.*, u.display_name AS creator, p.name AS project_name,
             (SELECT COUNT(*) FROM requirements r WHERE r.release_id = rl.id) AS bug_count
      FROM releases rl LEFT JOIN users u ON u.id = rl.created_by
-     WHERE rl.project_id = ? ORDER BY rl.id DESC`).bind(pid).all()).results;
+     JOIN projects p ON p.id = rl.project_id
+     ORDER BY rl.project_id ASC, rl.id DESC`).all()).results;
   return json({ ok: true, items });
 }
 
