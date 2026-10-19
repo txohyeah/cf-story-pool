@@ -1009,13 +1009,16 @@ async function apiExport(request, env, u) {
      ${W} ORDER BY r.id ASC LIMIT 5000`).bind(...args).all()).results;
   const ids = rows.map(x => x.id);
   const acMap = new Map();
-  if (ids.length) {
-    const ph = ids.map(() => '?').join(',');
+  // D1 单查询 bind 参数上限 100：ids 可达 5000（LIMIT 5000），必须分批 IN 查询，
+  // 否则 >100 条的导出整单 500（Worker threw exception，存量 bug 由版本过滤测试暴露）
+  for (let i = 0; i < ids.length; i += 90) {
+    const chunk = ids.slice(i, i + 90);
+    const ph = chunk.map(() => '?').join(',');
     const evs = (await env.DB.prepare(
       `SELECT req_id, detail FROM events
        WHERE req_id IN (${ph}) AND action = 'comment'
          AND (ctype = 'ac' OR detail LIKE '【验收标准】%') ORDER BY id`)
-      .bind(...ids).all()).results;
+      .bind(...chunk).all()).results;
     for (const e of evs) {
       if (!acMap.has(e.req_id)) acMap.set(e.req_id, []);
       acMap.get(e.req_id).push(e.detail.replace(/^【验收标准】\s*/, ''));
