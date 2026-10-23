@@ -42,16 +42,38 @@ def retry(fn, n=6):
             time.sleep(5)
 
 
+def checked_json(response, context):
+    if response.status_code != 200:
+        raise SystemExit('%s 失败：HTTP %s' % (context, response.status_code))
+    try:
+        data = response.json()
+    except ValueError:
+        raise SystemExit('%s 失败：响应不是 JSON' % context)
+    if not isinstance(data, dict) or data.get('ok') is not True:
+        raise SystemExit('%s 失败：业务响应未成功' % context)
+    return data
+
+
 def login():
     s = requests.Session()
     s.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0'
     pw = open(os.path.join(WS, '.secrets', 'story_pool_pass_xiao_custom')).read().strip()
-    retry(lambda: s.post(BASE + '/api/login', json={'username': 'xiao', 'password': pw}, timeout=25))
+    try:
+        response = retry(lambda: s.post(BASE + '/api/login', json={'username': 'xiao', 'password': pw}, timeout=25))
+    except requests.RequestException:
+        raise SystemExit('登录失败：网络错误')
+    checked_json(response, '登录')
+    if not s.cookies.get('storypool_auth'):
+        raise SystemExit('登录失败：未获得 session cookie')
     return s
 
 
 def fetch(s, path):
-    return retry(lambda: s.get(BASE + path, timeout=25)).json()
+    try:
+        response = retry(lambda: s.get(BASE + path, timeout=25))
+    except requests.RequestException:
+        raise SystemExit('取数失败：网络错误')
+    return checked_json(response, path)
 
 
 def md_table(headers, rows):
@@ -62,7 +84,19 @@ def md_table(headers, rows):
 
 
 def get_requirements(s, pid):
-    return fetch(s, '/api/requirements?project=%d&page_size=50' % pid).get('items', [])
+    items = []
+    first = fetch(s, '/api/requirements?project=%d&page_size=50&page=1' % pid)
+    total, pages = first.get('total'), first.get('pages')
+    if type(total) is not int or total < 0 or type(pages) is not int or pages != max(1, (total + 49) // 50):
+        raise SystemExit('需求分页元数据不合法')
+    for page in range(1, pages + 1):
+        data = first if page == 1 else fetch(s, '/api/requirements?project=%d&page_size=50&page=%d' % (pid, page))
+        if data.get('total') != total or data.get('pages') != pages or data.get('page') != page or not isinstance(data.get('items'), list):
+            raise SystemExit('需求分页数据发生变化或响应异常，请重新导出')
+        items.extend(data['items'])
+    if len(items) != total or len({x['id'] for x in items}) != total:
+        raise SystemExit('需求分页完整性校验失败：累计条数或唯一 ID 数不等于 total')
+    return items
 
 
 def get_testcases(s, pid):
@@ -197,7 +231,7 @@ def gen_export(s, pid, out):
             return default
 
     # 需求全量（列表+逐条评论全文）
-    reqs = fetch(s, '/api/requirements?project=%d&page_size=50' % pid).get('items', [])
+    reqs = get_requirements(s, pid)
     reqs_full = []
     for x in reqs:
         d = safe(lambda x=x: fetch(s, '/api/requirements/%d' % x['id']), {})
@@ -216,14 +250,14 @@ def gen_export(s, pid, out):
     # releases + 执行记录
     rels = fetch(s, '/api/releases?project=%d' % pid).get('items', [])
     for rl in rels:
-        ex = safe(lambda rl=rl: s.get(BASE + '/api/releases/%d/executions' % rl['id']).json(), {})
+        ex = safe(lambda rl=rl: fetch(s, '/api/releases/%d/executions' % rl['id']), {})
         rl['executions'] = ex.get('items', [])
         rl['stat'] = ex.get('stat', {})
     # 用例全量（含步骤全文+版本+执行）
     tcs = fetch(s, '/api/testcases?project=%d' % pid).get('items', [])
     tcs_full = []
     for x in tcs:
-        d = safe(lambda x=x: s.get(BASE + '/api/testcases/%d' % x['id']).json(), {})
+        d = safe(lambda x=x: fetch(s, '/api/testcases/%d' % x['id']), {})
         if d.get('ok'):
             tcs_full.append({**d['tc'], 'steps_md': d.get('steps_md', ''),
                              'versions': d.get('versions', []), 'executions': d.get('executions', [])})
@@ -234,7 +268,7 @@ def gen_export(s, pid, out):
     docs = fetch(s, '/api/docs?project_id=%d' % pid).get('items', [])
     docs_full = []
     for x in docs:
-        d = safe(lambda x=x: s.get(BASE + '/api/docs/%d' % x['id']).json(), {})
+        d = safe(lambda x=x: fetch(s, '/api/docs/%d' % x['id']), {})
         if d.get('ok'):
             docs_full.append({**d['doc'], 'content_md': d.get('content_md', ''),
                               'versions': d.get('versions', [])})

@@ -3,7 +3,7 @@
 密码来源：workspace/.secrets/story_pool_pass_xiao / _zhoubin / _chenhaiyan / story_pool_qwenpaw
 （绝不回显/落日志）。输出 data/seed_users.sql（仅含 PBKDF2 哈希，无明文）。
 格式与 worker 一致：pbkdf2$100000$salt_b64$hash_b64
-注意：重跑会先删同名单再插，会使这些账号的所有会话失效。
+注意：重跑使用 UPSERT 保留用户 ID，并删除这些账号的会话。
 """
 import base64
 import hashlib
@@ -42,13 +42,13 @@ def main():
     names = ', '.join(sqlq(r[0]) for r in rows)
     lines = [
         '-- 用户种子（哈希含随机盐；重跑会使这些账号的所有会话失效）',
-        'DELETE FROM users WHERE username IN (%s);' % names,
     ]
     for who, h, display in rows:
         lines.append(
             "INSERT INTO users (username, pw_hash, role, display_name, active, created_at) "
-            "VALUES (%s, %s, 'member', %s, 1, '2026-10-08T00:00:00Z');" % (sqlq(who), sqlq(h), sqlq(display))
+            "VALUES (%s, %s, 'member', %s, 1, '2026-10-08T00:00:00Z') ON CONFLICT(username) DO UPDATE SET pw_hash = excluded.pw_hash, display_name = excluded.display_name, active = 1;" % (sqlq(who), sqlq(h), sqlq(display))
         )
+    lines.append('DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE username IN (%s));' % names)
     out = os.path.join(ROOT, 'data', 'seed_users.sql')
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, 'w') as f:
