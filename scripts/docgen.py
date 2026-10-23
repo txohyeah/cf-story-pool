@@ -148,7 +148,14 @@ def gen_report(s, pid, rel_id, out):
     tc_detail = {}
     for e in items:
         d = fetch(s, '/api/testcases/%d' % e['tc_id'])
-        tc_detail[e['tc_id']] = d.get('steps_md', '')
+        version = e.get('tc_version')
+        if version is None:
+            tc_detail[e['tc_id']] = d.get('steps_md', '')
+        else:
+            steps = e.get('executed_steps_md')
+            if steps is None:
+                raise SystemExit('执行记录引用的用例版本不存在：tc_id=%s version=%s' % (e['tc_id'], version))
+            tc_detail[e['tc_id']] = steps
     rows = []
     for e in items:
         rows.append([e['tc_code'], e['tc_title'], RES_CN.get(e['result'], e['result']),

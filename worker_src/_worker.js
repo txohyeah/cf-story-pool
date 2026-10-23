@@ -673,6 +673,11 @@ async function apiReqPatch(request, env, u, id) {
     } else {
       next.project_id = r.project_id;
     }
+    if (next.project_id !== r.project_id) next.release_id = null;
+    if (next.release_id) {
+      const release = await env.DB.prepare('SELECT project_id FROM releases WHERE id = ?').bind(next.release_id).first();
+      if (!release || release.project_id !== next.project_id) return json({ error: '关联版本必须属于需求所在项目' }, 400);
+    }
     if (!next.title) return json({ error: '标题不能为空' }, 400);
     await env.DB.prepare(
       `UPDATE requirements SET title = ?, description = ?, type = ?, urgency = ?, project_id = ?, updated_at = ?,
@@ -1270,6 +1275,10 @@ async function apiTcCreate(request, env, u) {
   const now = nowIso();
   const steps = String(body.steps_md || '').slice(0, 20000);
   const related = body.related_req ? parseInt(body.related_req, 10) || null : null;
+  if (related) {
+    const req = await env.DB.prepare('SELECT project_id FROM requirements WHERE id = ?').bind(related).first();
+    if (!req || req.project_id !== pid) return json({ error: '关联需求必须属于用例所在项目' }, 400);
+  }
   const results = await env.DB.batch([env.DB.prepare(
     `INSERT INTO test_cases (project_id, tc_code, title, steps_md, related_req, covers_urs, risk, ctype, status, current_version, created_by, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?)`)
@@ -1299,8 +1308,9 @@ async function apiTcDetail(request, env, id) {
      FROM test_case_versions v LEFT JOIN users u ON u.id = v.author_id
      WHERE v.tc_id = ? ORDER BY v.version DESC`).bind(id).all()).results;
   const execs = (await env.DB.prepare(
-    `SELECT e.*, rl.version AS release_version, u.display_name AS executor
+    `SELECT e.*, rl.version AS release_version, u.display_name AS executor, v.steps_md AS executed_steps_md
      FROM tc_executions e
+     LEFT JOIN test_case_versions v ON v.tc_id = e.tc_id AND v.version = e.tc_version
      JOIN releases rl ON rl.id = e.release_id
      LEFT JOIN users u ON u.id = e.executed_by
      WHERE e.tc_id = ? ORDER BY e.executed_at DESC`).bind(id).all()).results;
@@ -1333,6 +1343,10 @@ async function apiTcPatch(request, env, u, id) {
     covers_urs: body.covers_urs !== undefined ? String(body.covers_urs).slice(0, 300) : t.covers_urs,
     related_req: body.related_req !== undefined ? (body.related_req ? parseInt(body.related_req, 10) || null : null) : t.related_req
   };
+  if (next.related_req) {
+    const req = await env.DB.prepare('SELECT project_id FROM requirements WHERE id = ?').bind(next.related_req).first();
+    if (!req || req.project_id !== t.project_id) return json({ error: '关联需求必须属于用例所在项目' }, 400);
+  }
   if (!next.title) return json({ error: '标题必填' }, 400);
   const backToDraft = t.status === 'approved';
   const expected = body.expected_version;
@@ -1364,24 +1378,25 @@ async function apiTcDelete(request, env, u, id) {
 }
 
 async function apiTcExecPut(request, env, u, id) {
-  const t = (await env.DB.prepare('SELECT id FROM test_cases WHERE id = ?').bind(id).first());
+  const t = (await env.DB.prepare('SELECT id, project_id, current_version FROM test_cases WHERE id = ?').bind(id).first());
   if (!t) return json({ error: '用例不存在' }, 404);
   const body = await readApiBody(request);
   const rid = parseInt(body.release_id, 10);
   if (!rid) return json({ error: '缺少 release_id' }, 400);
-  const rl = (await env.DB.prepare('SELECT id FROM releases WHERE id = ?').bind(rid).first());
+  const rl = (await env.DB.prepare('SELECT id, project_id FROM releases WHERE id = ?').bind(rid).first());
   if (!rl) return json({ error: '版本不存在' }, 404);
+  if (t.project_id !== rl.project_id) return json({ error: '用例和执行版本必须属于同一项目' }, 400);
   const result = TC_RESULTS.includes(body.result) ? body.result : '';
   const conclusion = String(body.conclusion || '').slice(0, 2000);
   const devRef = String(body.dev_ref || '').trim().slice(0, 60);
   const evRef = String(body.ev_ref || '').trim().slice(0, 60);
   await env.DB.prepare(
-    `INSERT INTO tc_executions (tc_id, release_id, result, conclusion, dev_ref, ev_ref, executed_by, executed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO tc_executions (tc_id, release_id, result, conclusion, dev_ref, ev_ref, executed_by, executed_at, tc_version)
+     SELECT id, ?, ?, ?, ?, ?, ?, ?, current_version FROM test_cases WHERE id = ?
      ON CONFLICT (tc_id, release_id) DO UPDATE SET result = excluded.result, conclusion = excluded.conclusion,
        dev_ref = excluded.dev_ref, ev_ref = excluded.ev_ref, executed_by = excluded.executed_by,
-       executed_at = excluded.executed_at`)
-    .bind(id, rid, result, conclusion, devRef, evRef, u.userId, nowIso()).run();
+       executed_at = excluded.executed_at, tc_version = excluded.tc_version`)
+    .bind(rid, result, conclusion, devRef, evRef, u.userId, nowIso(), id).run();
   return json({ ok: true });
 }
 
@@ -1389,8 +1404,9 @@ async function apiTcExecList(request, env, id) {
   const rl = (await env.DB.prepare('SELECT id, version FROM releases WHERE id = ?').bind(id).first());
   if (!rl) return json({ error: '版本不存在' }, 404);
   const items = (await env.DB.prepare(
-    `SELECT e.*, t.tc_code, t.title AS tc_title, t.status AS tc_status, u.display_name AS executor
+    `SELECT e.*, t.tc_code, t.title AS tc_title, t.status AS tc_status, u.display_name AS executor, v.steps_md AS executed_steps_md
      FROM tc_executions e
+     LEFT JOIN test_case_versions v ON v.tc_id = e.tc_id AND v.version = e.tc_version
      JOIN test_cases t ON t.id = e.tc_id
      LEFT JOIN users u ON u.id = e.executed_by
      WHERE e.release_id = ? ORDER BY t.tc_code ASC`).bind(id).all()).results;
