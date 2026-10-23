@@ -686,6 +686,8 @@ function exportCsv() {
   const p = new URLSearchParams();
   if ($('f-project').value) p.set('project', $('f-project').value);
   if ($('f-status').value) p.set('status', $('f-status').value);
+  if ($('f-urgency').value) p.set('urgency', $('f-urgency').value);
+  if ($('f-q').value.trim()) p.set('q', $('f-q').value.trim());
   if ($('f-type').value) p.set('type', $('f-type').value);
   if ($('f-severity').value) p.set('severity', $('f-severity').value);
   if ($('f-tag').value) p.set('tag', $('f-tag').value);
