@@ -187,7 +187,7 @@ async function openTc(id) {
       <textarea id="t-steps" rows="10" class="mono">${esc(d.steps_md)}</textarea>
       <input id="t-summary" placeholder="修订摘要（选填）" style="padding:8px">
       <div style="display:flex;gap:8px">
-        <button class="btn primary small" onclick="saveTc(${id})">保存为新版本</button>
+        <button class="btn primary small" onclick="saveTc(${id}, ${t.current_version})">保存为新版本</button>
         <button class="btn small" onclick="closeDetail();loadList()">取消</button>
       </div>
     </div>
@@ -220,10 +220,10 @@ function toggleEdit() {
   const show = e.style.display === 'none';
   e.style.display = show ? 'flex' : 'none'; v.style.display = show ? 'none' : '';
 }
-async function saveTc(id) {
+async function saveTc(id, expectedVersion) {
   const r = await api('/api/testcases/' + id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: $('t-title').value.trim(), steps_md: $('t-steps').value,
+    body: JSON.stringify({ expected_version: expectedVersion, title: $('t-title').value.trim(), steps_md: $('t-steps').value,
       risk: $('t-risk').value, ctype: $('t-ctype').value, related_req: $('t-req').value || null,
       change_summary: $('t-summary').value })
   });

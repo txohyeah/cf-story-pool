@@ -176,7 +176,7 @@ $('btn-save').onclick = async () => {
   if (!content.trim()) { $('e-err').textContent = '内容不能为空'; $('e-err').style.display = 'block'; return; }
   const r = await api('/api/docs/' + doc.id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title: $('e-title').value.trim(), content_md: content, change_summary: $('e-summary').value.trim() })
+    body: JSON.stringify({ title: $('e-title').value.trim(), content_md: content, expected_version: doc.current_version, change_summary: $('e-summary').value.trim() })
   });
   if (r && r.ok) { document.body.classList.remove('editing'); load(doc.id); }
   else { $('e-err').textContent = (r && r.error) || '保存失败'; $('e-err').style.display = 'block'; }
