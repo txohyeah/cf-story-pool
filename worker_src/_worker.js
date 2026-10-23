@@ -436,7 +436,16 @@ async function apiReqCreate(request, env, u) {
 // 中文搜索：FTS5 默认 unicode61 分词器把连续中文整段当一个 token，子串搜不到（如搜"药杯"命中不了"药杯打印加条件"）。
 // 数据量小（百条级），直接用 LIKE 子串匹配；FTS 表与触发器保留但不走查询路径。
 function likeEsc(t) { return '%' + String(t).replace(/[\\%_]/g, c => '\\' + c) + '%'; }
-function qTokens(q) { return String(q || '').trim().split(/\s+/).filter(Boolean).slice(0, 8); }
+function qTokens(q) {
+  const tokens = String(q || '').trim().split(/\s+/).filter(Boolean).slice(0, 8);
+  if (tokens.some(token => enc.encode(likeEsc(token)).byteLength > 50)) {
+    throw new ApiError('搜索词过长：每个词转义后的 LIKE 模式不得超过 50 个 UTF-8 字节，请缩短或用空格分词');
+  }
+  return tokens;
+}
+function statusValues(status) {
+  return [...new Set(status.split(',').filter(value => STATUSES.includes(value)))].slice(0, 7);
+}
 async function apiReqList(request, env, u) {
   const url = new URL(request.url);
   const page = Math.max(1, parseInt(url.searchParams.get('page'), 10) || 1);
@@ -447,7 +456,7 @@ async function apiReqList(request, env, u) {
   if (status === 'open') {
     where.push(`r.status NOT IN ('closed','dup_closed')`);
   } else if (status) {
-    const ss = status.split(',').filter(s => STATUSES.includes(s));
+    const ss = statusValues(status);
     if (ss.length) { where.push(`r.status IN (${ss.map(() => '?').join(',')})`); args.push(...ss); }
   }
   const project = parseInt(url.searchParams.get('project'), 10);
@@ -533,7 +542,7 @@ async function apiMyWork(request, env, u) {
   if (status === 'open') {
     // 未关闭 = 默认条件，无需追加
   } else if (status) {
-    const ss = status.split(',').filter(s => STATUSES.includes(s));
+    const ss = statusValues(status);
     if (ss.length) { where.push(`r.status IN (${ss.map(() => '?').join(',')})`); args.push(...ss); }
   }
   const project = parseInt(url.searchParams.get('project'), 10);
@@ -986,30 +995,37 @@ async function apiExportPackage(request, env, u) {
   const proj = (await env.DB.prepare('SELECT id, name FROM projects WHERE id = ?').bind(pid).first());
   if (!proj) return json({ error: '项目不存在' }, 404);
   const reqs = (await env.DB.prepare('SELECT * FROM requirements WHERE project_id = ? ORDER BY id').bind(pid).all()).results;
-  const reqs_full = [];
-  for (const x of reqs) {
-    const ev = (await env.DB.prepare(
-      `SELECT e.detail, e.ctype, e.created_at, us.display_name AS actor FROM events e
-       LEFT JOIN users us ON us.id = e.actor_id WHERE e.req_id = ? AND e.action = 'comment' ORDER BY e.id`).bind(x.id).all()).results;
-    const tg = (await env.DB.prepare(
-      `SELECT t.name FROM requirement_tags rt JOIN tags t ON t.id = rt.tag_id WHERE rt.req_id = ? ORDER BY t.name`).bind(x.id).all()).results.map(r2 => r2.name);
-    reqs_full.push({ ...x, tags: tg, comments: ev });
+  const comments = (await env.DB.prepare(`SELECT e.req_id, e.detail, e.ctype, e.created_at, us.display_name AS actor
+    FROM events e LEFT JOIN users us ON us.id = e.actor_id
+    WHERE e.req_id IN (SELECT id FROM requirements WHERE project_id = ?) AND e.action = 'comment'
+    ORDER BY e.id`).bind(pid).all()).results;
+  const tags = (await env.DB.prepare(`SELECT rt.req_id, t.name FROM requirement_tags rt JOIN tags t ON t.id = rt.tag_id
+    WHERE rt.req_id IN (SELECT id FROM requirements WHERE project_id = ?) ORDER BY t.name`).bind(pid).all()).results;
+  const commentMap = new Map(), tagMap = new Map();
+  for (const { req_id, ...comment } of comments) {
+    if (!commentMap.has(req_id)) commentMap.set(req_id, []);
+    commentMap.get(req_id).push(comment);
   }
+  for (const { req_id, name } of tags) {
+    if (!tagMap.has(req_id)) tagMap.set(req_id, []);
+    tagMap.get(req_id).push(name);
+  }
+  const reqs_full = reqs.map(x => ({ ...x, comments: commentMap.get(x.id) || [], tags: tagMap.get(x.id) || [] }));
   const rels = (await env.DB.prepare('SELECT * FROM releases WHERE project_id = ? ORDER BY id').bind(pid).all()).results;
-  for (const rl of rels) {
-    rl.executions = (await env.DB.prepare(
-      `SELECT e.*, t.tc_code, t.title AS tc_title FROM tc_executions e
-       JOIN test_cases t ON t.id = e.tc_id WHERE e.release_id = ? ORDER BY t.tc_code`).bind(rl.id).all()).results;
+  const executions = (await env.DB.prepare(`SELECT e.*, t.tc_code, t.title AS tc_title FROM tc_executions e
+    JOIN test_cases t ON t.id = e.tc_id JOIN releases rl ON rl.id = e.release_id
+    WHERE rl.project_id = ? ORDER BY t.tc_code`).bind(pid).all()).results;
+  const executionMap = new Map();
+  for (const e of executions) {
+    if (!executionMap.has(e.release_id)) executionMap.set(e.release_id, []);
+    executionMap.get(e.release_id).push(e);
   }
+  for (const rl of rels) rl.executions = executionMap.get(rl.id) || [];
   const tcs = (await env.DB.prepare('SELECT * FROM test_cases WHERE project_id = ? ORDER BY tc_code').bind(pid).all()).results;
-  const docs = (await env.DB.prepare(
-    `SELECT d.*, us.display_name AS creator FROM docs d
-     LEFT JOIN users us ON us.id = d.created_by WHERE d.project_id = ? ORDER BY d.id`).bind(pid).all()).results;
-  for (const d of docs) {
-    const c = (await env.DB.prepare('SELECT content_md FROM doc_versions WHERE doc_id = ? AND version = ?')
-      .bind(d.id, d.current_version).first());
-    d.content_md = c ? c.content_md : '';
-  }
+  const docs = (await env.DB.prepare(`SELECT d.*, us.display_name AS creator, COALESCE(v.content_md, '') AS content_md
+    FROM docs d LEFT JOIN users us ON us.id = d.created_by
+    LEFT JOIN doc_versions v ON v.doc_id = d.id AND v.version = d.current_version
+    WHERE d.project_id = ? ORDER BY d.id`).bind(pid).all()).results;
   return json({
     exported_at: nowIso(), project: proj,
     requirements: reqs_full, releases: rels, testcases: tcs, docs
@@ -1025,11 +1041,19 @@ async function apiExport(request, env, u) {
   const status = (url.searchParams.get('status') || '').trim();
   if (status === 'open') { where.push(`r.status NOT IN ('closed','dup_closed')`); }
   else if (status) {
-    const ss = status.split(',').filter(x => STATUSES.includes(x));
+    const ss = statusValues(status);
     if (ss.length) { where.push(`r.status IN (${ss.map(() => '?').join(',')})`); args.push(...ss); }
   }
   const type = url.searchParams.get('type');
   if (TYPES.includes(type)) { where.push('r.type = ?'); args.push(type); }
+  const urgency = url.searchParams.get('urgency');
+  if (URGENCIES.includes(urgency)) { where.push('r.urgency = ?'); args.push(urgency); }
+  const q = (url.searchParams.get('q') || '').trim();
+  if (q) {
+    const tokens = qTokens(q);
+    where.push('(' + tokens.map(() => `(r.title LIKE ? ESCAPE '\\' OR r.description LIKE ? ESCAPE '\\')`).join(' OR ') + ')');
+    for (const token of tokens) args.push(likeEsc(token), likeEsc(token));
+  }
   const severity = url.searchParams.get('severity');
   if (severity === 'none') { where.push("r.severity = ''"); }
   else if (SEVERITIES.includes(severity)) { where.push('r.severity = ?'); args.push(severity); }
@@ -1042,7 +1066,7 @@ async function apiExport(request, env, u) {
   const release = parseInt(url.searchParams.get('release'), 10);
   if (release) { where.push('r.release_id = ?'); args.push(release); }
   const W = where.length ? 'WHERE ' + where.join(' AND ') : '';
-  const rows = (await env.DB.prepare(
+  const selected = (await env.DB.prepare(
     `SELECT r.id, r.title, r.type, r.urgency, r.status, r.severity, r.root_cause, r.ref_code,
             r.created_at, us.display_name AS creator, p.name AS project_name,
             rl.version AS release_version
@@ -1050,23 +1074,17 @@ async function apiExport(request, env, u) {
      JOIN projects p ON p.id = r.project_id
      LEFT JOIN users us ON us.id = r.created_by
      LEFT JOIN releases rl ON rl.id = r.release_id
-     ${W} ORDER BY r.id ASC LIMIT 5000`).bind(...args).all()).results;
-  const ids = rows.map(x => x.id);
+     ${W} ORDER BY r.id ASC LIMIT 5001`).bind(...args).all()).results;
+  const truncated = selected.length > 5000;
+  const rows = selected.slice(0, 5000);
   const acMap = new Map();
-  // D1 单查询 bind 参数上限 100：ids 可达 5000（LIMIT 5000），必须分批 IN 查询，
-  // 否则 >100 条的导出整单 500（Worker threw exception，存量 bug 由版本过滤测试暴露）
-  for (let i = 0; i < ids.length; i += 90) {
-    const chunk = ids.slice(i, i + 90);
-    const ph = chunk.map(() => '?').join(',');
-    const evs = (await env.DB.prepare(
-      `SELECT req_id, detail FROM events
-       WHERE req_id IN (${ph}) AND action = 'comment'
-         AND (ctype = 'ac' OR detail LIKE '【验收标准】%') ORDER BY id`)
-      .bind(...chunk).all()).results;
-    for (const e of evs) {
-      if (!acMap.has(e.req_id)) acMap.set(e.req_id, []);
-      acMap.get(e.req_id).push(e.detail.replace(/^【验收标准】\s*/, ''));
-    }
+  const evs = (await env.DB.prepare(`SELECT e.req_id, e.detail FROM events e
+    JOIN (SELECT r.id FROM requirements r ${W} ORDER BY r.id ASC LIMIT 5000) selected ON selected.id = e.req_id
+    WHERE e.action = 'comment' AND (e.ctype = 'ac' OR e.detail LIKE '【验收标准】%') ORDER BY e.id`)
+    .bind(...args).all()).results;
+  for (const e of evs) {
+    if (!acMap.has(e.req_id)) acMap.set(e.req_id, []);
+    acMap.get(e.req_id).push(e.detail.replace(/^【验收标准】\s*/, ''));
   }
   const SEV = { critical: '关键', major: '重大', general: '一般', watch: '观察' };
   const RC = { config: '配置', defect: '缺陷', usage: '使用', external: '外部依赖', data: '数据', requirement: '需求有误' };
@@ -1075,6 +1093,7 @@ async function apiExport(request, env, u) {
   const FV = v => { v = String(v || ''); return /^[vV]/.test(v) ? v : 'v' + v; };
   const cell = csvCell;
   const lines = [['编号','标题','类型','状态','紧急度','严重级别','根因分类','提单人','创建日期','关联编号','关联版本','验收标准汇总'].map(cell).join(',')];
+  if (truncated) lines.unshift([cell('警告：结果超过 5000 条，本文件仅导出前 5000 条，请缩小筛选范围')].join(','));
   for (const x of rows) {
     lines.push([x.id, x.title, TY[x.type] || x.type, ST[x.status] || x.status,
       x.urgency === 'urgent' ? '紧急' : '一般', SEV[x.severity] || '', RC[x.root_cause] || '',
