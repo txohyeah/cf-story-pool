@@ -349,39 +349,35 @@ async function apiReqCreate(request, env, u) {
   const relatedCodes = JSON.stringify((Array.isArray(body.related_codes) ? body.related_codes : [])
     .map(x => String(x).trim().slice(0, 60)).filter(Boolean).slice(0, 20));
   // #199 幂等键：client_token 去重——网络抖动下同 token 重复提交返回已建单，不新建
-  const clientToken = String(body.client_token || '').trim().slice(0, 64) || null;
-  if (clientToken) {
-    const existed = (await env.DB.prepare('SELECT id FROM requirements WHERE client_token = ?').bind(clientToken).first());
-    if (existed) return json({ ok: true, id: existed.id, dedup: true });
+  const clientToken = String(body.client_token || '').trim().slice(0, 64) || crypto.randomUUID();
+  const existed = await env.DB.prepare('SELECT id FROM requirements WHERE client_token = ?').bind(clientToken).first();
+  if (existed) return json({ ok: true, id: existed.id, dedup: true });
+  const stmts = [env.DB.prepare(
+    `INSERT INTO requirements (project_id, title, description, type, urgency, status, channel, created_by, updated_at, severity, root_cause, ref_code, related_codes, client_token)
+     VALUES (?, ?, ?, ?, ?, 'submitted', 'web', ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(projectId, title, description, type, urgency, u.userId, nowIso(), severity, rootCause, refCode, relatedCodes, clientToken)];
+  for (const tid of tagIds) {
+    stmts.push(env.DB.prepare(`INSERT INTO requirement_tags (req_id, tag_id)
+      SELECT id, ? FROM requirements WHERE client_token = ?`).bind(tid, clientToken));
   }
+  for (const a of attaches) {
+    stmts.push(env.DB.prepare(`INSERT INTO attachments (req_id, store_key, orig_name, size)
+      SELECT id, ?, ?, ? FROM requirements WHERE client_token = ?`)
+      .bind(a.key, String(a.name || '').slice(0, 200), parseInt(a.size, 10) || 0, clientToken));
+  }
+  stmts.push(env.DB.prepare(`INSERT INTO events (req_id, actor_id, action, detail)
+    SELECT id, ?, 'create', ? FROM requirements WHERE client_token = ?`)
+    .bind(u.userId, JSON.stringify({ title }), clientToken));
   try {
-    const ins = await env.DB.prepare(
-      `INSERT INTO requirements (project_id, title, description, type, urgency, status, channel, created_by, updated_at, severity, root_cause, ref_code, related_codes, client_token)
-       VALUES (?, ?, ?, ?, ?, 'submitted', 'web', ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(projectId, title, description, type, urgency, u.userId, nowIso(), severity, rootCause, refCode, relatedCodes, clientToken).run();
-    var reqId = ins.meta.last_row_id;
+    const results = await env.DB.batch(stmts);
+    return json({ ok: true, id: results[0].meta.last_row_id });
   } catch (e) {
-    // 并发竞态兜底：UNIQUE 冲突说明同 token 已建成，查回返回
-    if (clientToken && String(e.message || '').includes('UNIQUE')) {
-      const existed = (await env.DB.prepare('SELECT id FROM requirements WHERE client_token = ?').bind(clientToken).first());
-      if (existed) return json({ ok: true, id: existed.id, dedup: true });
+    if (String(e.message || '').includes('UNIQUE')) {
+      const row = await env.DB.prepare('SELECT id FROM requirements WHERE client_token = ?').bind(clientToken).first();
+      if (row) return json({ ok: true, id: row.id, dedup: true });
     }
     throw e;
   }
-  const stmts = [];
-  for (const tid of tagIds) {
-    stmts.push(env.DB.prepare('INSERT OR IGNORE INTO requirement_tags (req_id, tag_id) VALUES (?, ?)').bind(reqId, tid));
-  }
-  for (const a of attaches) {
-    stmts.push(env.DB.prepare(
-      'INSERT INTO attachments (req_id, store_key, orig_name, size) VALUES (?, ?, ?, ?)')
-      .bind(reqId, a.key, String(a.name || '').slice(0, 200), parseInt(a.size, 10) || 0));
-  }
-  stmts.push(env.DB.prepare(
-    `INSERT INTO events (req_id, actor_id, action, detail) VALUES (?, ?, 'create', ?)`)
-    .bind(reqId, u.userId, JSON.stringify({ title })));
-  if (stmts.length) await env.DB.batch(stmts);
-  return json({ ok: true, id: reqId });
 }
 
 // ---------- 列表 ----------
@@ -824,14 +820,13 @@ async function apiDocCreate(request, env, u) {
   const proj = await env.DB.prepare('SELECT id FROM projects WHERE id = ?').bind(pid).first();
   if (!proj) return json({ error: '项目不存在' }, 404);
   const now = nowIso();
-  const r = await env.DB.prepare(
+  const results = await env.DB.batch([env.DB.prepare(
     `INSERT INTO docs (project_id, title, current_version, status, created_by, created_at, updated_at)
-     VALUES (?, ?, 1, 'draft', ?, ?, ?)`).bind(pid, title, u.userId, now, now).run();
-  const docId = r.meta.last_row_id;
-  await env.DB.prepare(
+     VALUES (?, ?, 1, 'draft', ?, ?, ?)`).bind(pid, title, u.userId, now, now),
+    env.DB.prepare(
     `INSERT INTO doc_versions (doc_id, version, content_md, change_summary, author_id, created_at)
-     VALUES (?, 1, ?, '首版', ?, ?)`).bind(docId, content, u.userId, now).run();
-  return json({ ok: true, id: docId });
+     VALUES (last_insert_rowid(), 1, ?, '首版', ?, ?)`).bind(content, u.userId, now)]);
+  return json({ ok: true, id: results[0].meta.last_row_id });
 }
 
 async function apiDocDetail(request, env, u, id) {
@@ -883,12 +878,16 @@ async function apiDocPatch(request, env, u, id) {
     const newVer = d.current_version + 1;
     const summary = String(body.change_summary || '').trim().slice(0, 300);
     const backToDraft = d.status === 'approved';
-    await env.DB.prepare(
-      `INSERT INTO doc_versions (doc_id, version, content_md, change_summary, author_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`).bind(id, newVer, content, summary, u.userId, now).run();
-    await env.DB.prepare(
-      'UPDATE docs SET title = ?, current_version = ?, status = ?, approved_by = NULL, approved_at = NULL, updated_at = ? WHERE id = ?')
-      .bind(title, newVer, backToDraft ? 'draft' : d.status, now, id).run();
+    const expected = body.expected_version;
+    if (!Number.isInteger(expected) || expected < 1) return json({ error: '缺少合法 expected_version' }, 400);
+    if (expected !== d.current_version) return json({ error: '内容已被他人修改，请刷新' }, 409);
+    const results = await env.DB.batch([
+      env.DB.prepare('UPDATE docs SET title = ?, current_version = ?, status = ?, approved_by = NULL, approved_at = NULL, updated_at = ? WHERE id = ? AND current_version = ?')
+        .bind(title, newVer, backToDraft ? 'draft' : d.status, now, id, expected),
+      env.DB.prepare(`INSERT INTO doc_versions (doc_id, version, content_md, change_summary, author_id, created_at)
+        SELECT ?, ?, ?, ?, ?, ? WHERE changes() = 1`).bind(id, newVer, content, summary, u.userId, now)
+    ]);
+    if (!results[0].meta.changes) return json({ error: '内容已被他人修改，请刷新' }, 409);
     return json({ ok: true, version: newVer, status: backToDraft ? 'draft' : d.status });
   }
 
@@ -1138,8 +1137,20 @@ async function apiRelPatch(request, env, u, id) {
 }
 
 async function apiRelDelete(request, env, u, id) {
-  await env.DB.prepare('UPDATE requirements SET release_id = NULL WHERE release_id = ?').bind(id).run();
-  const r = await env.DB.prepare('DELETE FROM releases WHERE id = ?').bind(id).run();
+  const used = await env.DB.prepare('SELECT id FROM tc_executions WHERE release_id = ? LIMIT 1').bind(id).first();
+  if (used) return json({ error: '版本已有执行记录，不能删除' }, 400);
+  let results;
+  try {
+    results = await env.DB.batch([
+      env.DB.prepare('UPDATE requirements SET release_id = NULL WHERE release_id = ?').bind(id),
+      env.DB.prepare('DELETE FROM releases WHERE id = ?').bind(id)
+    ]);
+  } catch (e) {
+    // 检查后并发新增执行记录时，外键使整个批次回滚。
+    if (String(e.message || '').includes('FOREIGN KEY')) return json({ error: '版本已有执行记录，不能删除' }, 400);
+    throw e;
+  }
+  const r = results[1];
   if (!r.meta.changes) return json({ error: '版本不存在' }, 404);
   return json({ ok: true });
 }
@@ -1198,18 +1209,17 @@ async function apiTcCreate(request, env, u) {
   const now = nowIso();
   const steps = String(body.steps_md || '').slice(0, 20000);
   const related = body.related_req ? parseInt(body.related_req, 10) || null : null;
-  const r = await env.DB.prepare(
+  const results = await env.DB.batch([env.DB.prepare(
     `INSERT INTO test_cases (project_id, tc_code, title, steps_md, related_req, covers_urs, risk, ctype, status, current_version, created_by, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'draft', 1, ?, ?, ?)`)
     .bind(pid, tcCode, title, steps, related,
           String(body.covers_urs || '').slice(0, 300),
           TC_RISKS.includes(body.risk) ? body.risk : 'middle',
-          TC_TYPES.includes(body.ctype) ? body.ctype : 'positive', u.userId, now, now).run();
-  const tcId = r.meta.last_row_id;
-  await env.DB.prepare(
+          TC_TYPES.includes(body.ctype) ? body.ctype : 'positive', u.userId, now, now),
+    env.DB.prepare(
     `INSERT INTO test_case_versions (tc_id, version, steps_md, change_summary, author_id, created_at)
-     VALUES (?, 1, ?, '首版', ?, ?)`).bind(tcId, steps, u.userId, now).run();
-  return json({ ok: true, id: tcId, tc_code: tcCode });
+     VALUES (last_insert_rowid(), 1, ?, '首版', ?, ?)`).bind(steps, u.userId, now)]);
+  return json({ ok: true, id: results[0].meta.last_row_id, tc_code: tcCode });
 }
 
 async function apiTcDetail(request, env, id) {
@@ -1265,19 +1275,21 @@ async function apiTcPatch(request, env, u, id) {
   };
   if (!next.title) return json({ error: '标题必填' }, 400);
   const backToDraft = t.status === 'approved';
-  let newVer = t.current_version;
-  if (body.steps_md !== undefined && next.steps_md !== t.steps_md) {
-    newVer = t.current_version + 1;
-    await env.DB.prepare(
-      `INSERT INTO test_case_versions (tc_id, version, steps_md, change_summary, author_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`)
-      .bind(id, newVer, next.steps_md, String(body.change_summary || '').slice(0, 300), u.userId, now).run();
-  }
-  await env.DB.prepare(
-    `UPDATE test_cases SET title = ?, steps_md = ?, risk = ?, ctype = ?, covers_urs = ?, related_req = ?,
-     status = ?, approved_by = NULL, approved_at = NULL, current_version = ?, updated_at = ? WHERE id = ?`)
-    .bind(next.title, next.steps_md, next.risk, next.ctype, next.covers_urs, next.related_req,
-          backToDraft ? 'draft' : t.status, newVer, now, id).run();
+  const expected = body.expected_version;
+  if (!Number.isInteger(expected) || expected < 1) return json({ error: '缺少合法 expected_version' }, 400);
+  if (expected !== t.current_version) return json({ error: '内容已被他人修改，请刷新' }, 409);
+  // 每次编辑都推进修订号，确保仅修改标题等字段也受到并发控制保护。
+  const newVer = expected + 1;
+  const results = await env.DB.batch([
+    env.DB.prepare(`UPDATE test_cases SET title = ?, steps_md = ?, risk = ?, ctype = ?, covers_urs = ?, related_req = ?,
+      status = ?, approved_by = NULL, approved_at = NULL, current_version = ?, updated_at = ? WHERE id = ? AND current_version = ?`)
+      .bind(next.title, next.steps_md, next.risk, next.ctype, next.covers_urs, next.related_req,
+        backToDraft ? 'draft' : t.status, newVer, now, id, expected),
+    env.DB.prepare(`INSERT INTO test_case_versions (tc_id, version, steps_md, change_summary, author_id, created_at)
+      SELECT ?, ?, ?, ?, ?, ? WHERE changes() = 1`)
+      .bind(id, newVer, next.steps_md, String(body.change_summary || '').slice(0, 300), u.userId, now)
+  ]);
+  if (!results[0].meta.changes) return json({ error: '内容已被他人修改，请刷新' }, 409);
   return json({ ok: true, version: newVer, status: backToDraft ? 'draft' : t.status });
 }
 
