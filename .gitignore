@@ -5,3 +5,6 @@ scripts/__pycache__/
 data/cleanup_dup.sql
 data/reset_pw.sql
 data/import_v15_state.json
+
+# 本地生成的真实用户密码哈希，不进入版本控制
+data/seed_users.sql
