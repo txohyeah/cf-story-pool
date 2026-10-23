@@ -14,7 +14,7 @@ const URGENCIES = ['normal', 'urgent'];
 const SEVERITIES = ['critical', 'major', 'general', 'watch'];       // R3：关键/重大/一般/观察（CSV-14 口径）
 const ROOT_CAUSES = ['config', 'defect', 'usage', 'external', 'data', 'requirement']; // R3：根因六分类
 const MAX_ATTACH = 3;
-const MAX_FILE_BYTES = 2 * 1024 * 1024;
+const MAX_FILE_BYTES = 1.5 * 1024 * 1024;
 const EXTS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
 
 // ---------- utils ----------
@@ -39,6 +39,62 @@ function json(data, status) {
   });
 }
 function nowIso() { return new Date().toISOString(); }
+
+class ApiError extends Error {
+  constructor(message, status = 400) { super(message); this.status = status; }
+}
+const requestBodies = new WeakMap();
+async function readApiBody(request) {
+  if (requestBodies.has(request)) return requestBodies.get(request);
+  let body;
+  try { body = await request.json(); } catch { throw new ApiError('请求体必须是合法 JSON 对象'); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new ApiError('请求体必须是 JSON 对象');
+  const strings = ['username', 'password', 'current', 'next', 'name', 'title', 'description',
+    'type', 'urgency', 'severity', 'root_cause', 'ref_code', 'client_token', 'op', 'status',
+    'note', 'text', 'ctype', 'content', 'content_md', 'change_summary', 'version',
+    'change_scope', 'retest_scope', 'steps_md', 'covers_urs', 'risk', 'result',
+    'conclusion', 'dev_ref', 'ev_ref'];
+  for (const key of strings) {
+    // 文档评论的 version 是版本序号；发布单的 version 是版本号字符串。
+    if (key === 'version' && /\/api\/docs\/\d+\/comment$/.test(new URL(request.url).pathname)) continue;
+    if (body[key] !== undefined && typeof body[key] !== 'string') throw new ApiError(key + ' 必须为字符串');
+  }
+  for (const key of ['project_id', 'release_id', 'related_req', 'duplicate_of', 'assignee_id']) {
+    const v = body[key];
+    if (v !== undefined && v !== null && v !== '' &&
+        !((typeof v === 'number' && Number.isSafeInteger(v) && v > 0) ||
+          (typeof v === 'string' && /^[1-9]\d*$/.test(v) && Number.isSafeInteger(Number(v))))) {
+      throw new ApiError(key + ' 必须为正整数或空值');
+    }
+  }
+  if (body.expected_version !== undefined && (!Number.isSafeInteger(body.expected_version) || body.expected_version < 1)) {
+    throw new ApiError('expected_version 必须为正整数');
+  }
+  if (/\/api\/docs\/\d+\/comment$/.test(new URL(request.url).pathname) && body.version !== undefined &&
+      !(Number.isSafeInteger(Number(body.version)) && Number(body.version) > 0 && ['string', 'number'].includes(typeof body.version))) {
+    throw new ApiError('version 必须为正整数');
+  }
+  for (const key of ['tags', 'related_codes']) {
+    if (body[key] !== undefined && (!Array.isArray(body[key]) || body[key].some(v => typeof v !== 'string'))) {
+      throw new ApiError(key + ' 必须为字符串数组');
+    }
+  }
+  if (body.attachments !== undefined && (!Array.isArray(body.attachments) || body.attachments.some(a =>
+      !a || typeof a !== 'object' || Array.isArray(a) || !validAttachToken(a.key) ||
+      (a.name !== undefined && typeof a.name !== 'string') ||
+      (a.size !== undefined && (!Number.isSafeInteger(a.size) || a.size < 0))))) {
+    throw new ApiError('attachments 必须为合法附件数组');
+  }
+  requestBodies.set(request, body);
+  return body;
+}
+function csvCell(value) {
+  let text = String(value == null ? '' : value);
+  const start = text.replace(/^[\s\u0000-\u001f]+/, '');
+  const negativeNumber = /^-(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(start);
+  if (/^[=+@]/.test(start) || (start.startsWith('-') && !negativeNumber)) text = "'" + text;
+  return '"' + text.replace(/"/g, '""').replace(/\r?\n/g, '\\n') + '"';
+}
 
 // ---------- password ----------
 async function deriveBytes(passphrase, saltB64, iter, keylen) {
@@ -166,8 +222,7 @@ async function apiLogin(request, env) {
       }
     });
   }
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const username = (body.username || '').trim();
   const password = body.password || '';
   if (!username || !password) return json({ error: '请输入用户名和密码' }, 400);
@@ -197,8 +252,7 @@ async function apiMe(request, env) {
 
 // ---------- 改密码（保留当前会话，踢掉其他设备） ----------
 async function changeMyPassword(request, env, u) {
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const current = body.current || '';
   const next = (body.next || '').trim();
   if (!next || next.length < 6) return json({ error: '新密码至少 6 位' }, 400);
@@ -224,8 +278,7 @@ async function apiProjectList(request, env) {
   return json({ ok: true, projects: rows });
 }
 async function apiProjectCreate(request, env) {
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const name = (body.name || '').trim().slice(0, 50);
   if (!name) return json({ error: '项目名称必填' }, 400);
   const dup = await env.DB.prepare('SELECT id FROM projects WHERE name = ?').bind(name).first();
@@ -327,8 +380,7 @@ function validAttachToken(k) {
 
 // ---------- 建需求 ----------
 async function apiReqCreate(request, env, u) {
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const title = (body.title || '').trim().slice(0, 200);
   if (!title) return json({ error: '标题必填' }, 400);
   const projectId = parseInt(body.project_id, 10);
@@ -565,8 +617,7 @@ async function apiReqDetail(request, env, u, id) {
 async function apiReqPatch(request, env, u, id) {
   const r = (await env.DB.prepare('SELECT * FROM requirements WHERE id = ?').bind(id).first());
   if (!r) return json({ error: '需求不存在' }, 404);
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const op = body.op;
   if (op === 'status') {
     const to = body.status;
@@ -672,8 +723,7 @@ const COMMENT_CTYPES = ['normal', 'ac'];   // R7 修订：普通/验收标准；
 async function apiComment(request, env, u, id) {
   const r = (await env.DB.prepare('SELECT id FROM requirements WHERE id = ?').bind(id).first());
   if (!r) return json({ error: '需求不存在' }, 404);
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const text = (body.text || '').trim().slice(0, 2000);
   if (!text) return json({ error: '评论不能为空' }, 400);
   const ctype = COMMENT_CTYPES.includes(body.ctype) ? body.ctype : 'normal';
@@ -688,8 +738,7 @@ async function apiComment(request, env, u, id) {
 async function apiChkAdd(request, env, u, id) {
   const r = (await env.DB.prepare('SELECT id FROM requirements WHERE id = ?').bind(id).first());
   if (!r) return json({ error: '需求不存在' }, 404);
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const content = (body.content || '').trim().slice(0, 200);
   if (!content) return json({ error: '工作项内容必填' }, 400);
   let assigneeId = null;
@@ -712,8 +761,7 @@ async function apiChkAdd(request, env, u, id) {
 async function apiChkPatch(request, env, u, cid) {
   const c = (await env.DB.prepare('SELECT * FROM checklist_items WHERE id = ?').bind(cid).first());
   if (!c) return json({ error: '工作项不存在' }, 404);
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const next = {
     content: body.content !== undefined ? String(body.content).trim().slice(0, 200) || c.content : c.content,
     status: ['todo', 'doing', 'done'].includes(body.status) ? body.status : c.status,
@@ -771,7 +819,7 @@ async function apiUpload(request, env, u) {
   if (!file || typeof file === 'string') return json({ error: '缺少文件' }, 400);
   const ct = file.type || '';
   if (!EXTS[ct]) return json({ error: '仅支持图片（png/jpg/webp/gif）' }, 400);
-  if (file.size > MAX_FILE_BYTES) return json({ error: '单张图片不超过 2MB' }, 400);
+  if (file.size > MAX_FILE_BYTES) return json({ error: '单张图片不超过 1.5MB（D1 存储限制，预留元数据空间）' }, 400);
   const token = await BlobStorage.put(env, ct, file.size, await file.arrayBuffer());
   return json({ ok: true, key: token, name: file.name || '', size: file.size });
 }
@@ -809,8 +857,7 @@ async function apiDocList(request, env) {
 }
 
 async function apiDocCreate(request, env, u) {
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const pid = parseInt(body.project_id, 10);
   const title = String(body.title || '').trim().slice(0, 200);
   const content = String(body.content_md || '');
@@ -852,8 +899,7 @@ async function apiDocDetail(request, env, u, id) {
 async function apiDocPatch(request, env, u, id) {
   const d = (await env.DB.prepare('SELECT * FROM docs WHERE id = ?').bind(id).first());
   if (!d) return json({ error: '文档不存在' }, 404);
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const now = nowIso();
 
   // 仅状态流转（不携带内容）
@@ -913,8 +959,7 @@ async function apiDocVersion(request, env, id, v) {
 async function apiDocComment(request, env, u, id) {
   const d = (await env.DB.prepare('SELECT id, current_version FROM docs WHERE id = ?').bind(id).first());
   if (!d) return json({ error: '文档不存在' }, 404);
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const text = String(body.content || '').trim().slice(0, 2000);
   if (!text) return json({ error: '评论不能为空' }, 400);
   const ver = body.version ? parseInt(body.version, 10) : d.current_version;
@@ -1028,7 +1073,7 @@ async function apiExport(request, env, u) {
   const TY = { bug: 'bug', req: '需求', opt: '优化' };
   const ST = { submitted: '待复现', confirmed: '已确认', scheduled: '已排期', fixed: '已修复', verified: '已验证', closed: '关闭', dup_closed: '重复关闭' };
   const FV = v => { v = String(v || ''); return /^[vV]/.test(v) ? v : 'v' + v; };
-  const cell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""').replace(/\r?\n/g, '\\n') + '"';
+  const cell = csvCell;
   const lines = [['编号','标题','类型','状态','紧急度','严重级别','根因分类','提单人','创建日期','关联编号','关联版本','验收标准汇总'].map(cell).join(',')];
   for (const x of rows) {
     lines.push([x.id, x.title, TY[x.type] || x.type, ST[x.status] || x.status,
@@ -1086,8 +1131,7 @@ async function apiRelList(request, env) {
 }
 
 async function apiRelCreate(request, env, u) {
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const pid = parseInt(body.project_id, 10);
   const version = String(body.version || '').trim().slice(0, 60);
   if (!pid) return json({ error: '缺少项目' }, 400);
@@ -1106,8 +1150,7 @@ async function apiRelCreate(request, env, u) {
 async function apiRelPatch(request, env, u, id) {
   const rl = (await env.DB.prepare('SELECT * FROM releases WHERE id = ?').bind(id).first());
   if (!rl) return json({ error: '版本不存在' }, 404);
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const now = nowIso();
   const op = body.op || 'edit';
   if (op === 'status') {
@@ -1197,8 +1240,7 @@ async function apiTcList(request, env) {
 }
 
 async function apiTcCreate(request, env, u) {
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const pid = parseInt(body.project_id, 10);
   const title = String(body.title || '').trim().slice(0, 200);
   if (!pid) return json({ error: '缺少项目' }, 400);
@@ -1249,8 +1291,7 @@ async function apiTcDetail(request, env, id) {
 async function apiTcPatch(request, env, u, id) {
   const t = (await env.DB.prepare('SELECT * FROM test_cases WHERE id = ?').bind(id).first());
   if (!t) return json({ error: '用例不存在' }, 404);
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const now = nowIso();
   if (body.op === 'status') {
     const st = body.status;
@@ -1306,8 +1347,7 @@ async function apiTcDelete(request, env, u, id) {
 async function apiTcExecPut(request, env, u, id) {
   const t = (await env.DB.prepare('SELECT id FROM test_cases WHERE id = ?').bind(id).first());
   if (!t) return json({ error: '用例不存在' }, 404);
-  let body = {};
-  try { body = await request.json(); } catch (e) {}
+  const body = await readApiBody(request);
   const rid = parseInt(body.release_id, 10);
   if (!rid) return json({ error: '缺少 release_id' }, 400);
   const rl = (await env.DB.prepare('SELECT id FROM releases WHERE id = ?').bind(rid).first());
@@ -1357,11 +1397,12 @@ async function apiDedup(request, env) {
 }
 
 // ---------- main fetch ----------
-export default {
-  async fetch(request, env) {
+async function handleRequest(request, env) {
     const url = new URL(request.url);
     const p = url.pathname;
     const method = request.method;
+    if (p.startsWith('/api/') && ['POST', 'PUT', 'PATCH'].includes(method) &&
+        p !== '/api/upload' && p !== '/api/logout') await readApiBody(request);
 
     if (p === '/api/health') return json({ ok: true, t: nowIso() });
     if (p === '/api/login' && method === 'POST') return apiLogin(request, env);
@@ -1453,5 +1494,16 @@ export default {
     }
     const target = p === '/' ? '/index.html' : p;
     return serveStatic(url.origin + target, env);
+}
+
+export default {
+  async fetch(request, env) {
+    try {
+      return await handleRequest(request, env);
+    } catch (error) {
+      if (error instanceof ApiError) return json({ error: error.message }, error.status);
+      console.error('request failed', error.name || 'Error');
+      return json({ error: '服务器处理失败，请稍后重试' }, 500);
+    }
   }
 };
