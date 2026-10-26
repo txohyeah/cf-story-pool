@@ -6,19 +6,23 @@
 <title>版本发布 - 需求池</title>
 <link rel="stylesheet" href="/style.css">
 </head>
-<body>
-<div class="topbar">
-  <a class="btn small" href="/index.html">📁 需求列表</a>
+<body class="page-releases">
+<nav class="topbar" aria-label="主导航">
+  <a class="btn small" href="/index.html">需求</a>
   <a class="btn primary small" href="javascript:PoolUI.openNewReqModalForPage(3, function (id) { location.reload(); })">＋ 新需求</a>
+  <a class="btn small nav-link" href="/docs.html">文档</a>
+  <a class="btn small nav-link" aria-current="page" href="/releases.html">版本</a>
+  <a class="btn small nav-link" href="/testcases.html">用例</a>
+  <a class="btn small nav-link" href="/index.html?project=all" title="在需求列表中筛选并导出">导出</a>
   <span style="flex:1"></span>
   <a class="btn small" href="javascript:location.href='/api/export-package?project=' + (PoolUI.getProject() || document.getElementById('proj-sel').value)">📦 数据包</a>
   <select id="g-bar"></select>
   <a class="btn small" href="javascript:openPwdModal()">改密码</a>
   <a class="btn small" href="javascript:logout()">退出</a>
-</div>
+</nav>
 <div class="wrap">
-  <div class="card" style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <strong>🚀 版本发布</strong>
+  <div class="card section-toolbar" style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <strong>版本发布</strong>
     <select id="proj-sel" class="fld-row" style="padding:6px 8px"></select>
     <span style="flex:1"></span>
     <button class="btn primary small" id="btn-new-rel">＋ 新版本</button>
@@ -101,10 +105,10 @@ async function loadList() {
       <div class="proj-head">
         <strong>${esc(x.version)}</strong>
         ${stBadge(x.status)}
-        <span class="sub" style="color:#888;font-size:12px">🐛 ${x.bug_count} 个关联单</span>
+        <span class="sub mono" style="color:#888;font-size:12px">🐛 ${x.bug_count} 个关联单</span>
       </div>
       <div class="sub" style="color:#666;font-size:13px;margin-top:4px">${x.change_scope ? '变更：' + esc(x.change_scope) : ''}${x.retest_scope ? '<br>再验证：' + esc(x.retest_scope) : ''}</div>
-      <div class="sub" style="color:#888;font-size:12px;margin-top:4px">创建 ${esc(x.creator || '-')} ｜ ${esc((x.created_at || '').slice(0, 10))}${x.confirmor_at ? ' ｜ 发布确认 ' + esc((x.confirmor_at || '').slice(0, 10)) : ''}</div>
+      <div class="sub mono" style="color:#888;font-size:12px;margin-top:4px">创建 ${esc(x.creator || '-')} ｜ ${esc((x.created_at || '').slice(0, 10))}${x.confirmor_at ? ' ｜ 发布确认 ' + esc((x.confirmor_at || '').slice(0, 10)) : ''}</div>
       <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
         <button class="btn small" onclick="linkBug(${x.id})">🔗 关联 bug</button>
         ${x.status === 'planning' ? `<button class="btn small" onclick="setStatus(${x.id},'testing')">进入测试</button>` : ''}

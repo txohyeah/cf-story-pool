@@ -6,15 +6,15 @@
 <title>需求池</title>
 <link rel="stylesheet" href="/style.css">
 </head>
-<body>
+<body class="page-index">
 <div class="topbar">
-  <span class="brand" style="cursor:pointer" onclick="goHome()">📥 需求池</span>
-  <a class="btn small" href="/index.html" id="btn-home" style="display:none">📁 项目列表</a>
+  <span class="brand" style="cursor:pointer" onclick="goHome()">需求池<span class="brand-code"> / TRACKER</span></span>
+  <a class="btn small" href="/index.html" id="btn-home" style="display:none">项目列表</a>
   <a class="btn primary small" href="javascript:PoolUI.openNewReqModalForPage(3, function (id) { page = 1; loadList(); openReq(id); })" id="btn-new">＋ 新需求</a>
-  <a class="btn small" href="/docs.html" id="btn-docs">📄 文档</a>
-  <a class="btn small" href="/releases.html" id="btn-rel">🚀 版本</a>
-  <a class="btn small" href="/testcases.html" id="btn-tc">🧪 用例</a>
-  <a class="btn small" href="javascript:exportCsv()" id="btn-export">⬇ 导出</a>
+  <a class="btn small" href="/docs.html" id="btn-docs">文档</a>
+  <a class="btn small" href="/releases.html" id="btn-rel">版本</a>
+  <a class="btn small" href="/testcases.html" id="btn-tc">用例</a>
+  <a class="btn small" href="javascript:exportCsv()" id="btn-export">导出</a>
   <span class="sp"></span>
   <span class="sub" id="who"></span>
   <a class="btn small" href="javascript:location.href='/api/export-package?project=' + (PoolUI.getProject() || $('f-project').value || 3)">📦 数据包</a>
@@ -38,12 +38,12 @@
   <div id="view-list" style="display:none">
     <div class="list-layout">
       <div class="card side-work" id="mywork-card" style="display:none">
-        <h3>🔨 我的工作项（未完成）</h3>
+        <h3>我的工作项 <span class="section-note">未完成</span></h3>
         <label class="mw-sync"><input type="checkbox" id="mw-sync"> 同步需求过滤</label>
         <div id="mywork"></div>
       </div>
       <div class="card list-main">
-        <div class="fld-row" style="margin-bottom:10px">
+        <div class="fld-row filter-bar" style="margin-bottom:10px">
           <label class="fld" style="min-width:150px"><span>项目</span><select id="f-project"></select></label>
           <label class="fld" style="min-width:130px"><span>状态</span><select id="f-status">
             <option value="">全部</option><option value="open">未关闭</option>
@@ -203,7 +203,6 @@
 </div>
 
 <script src="/app-common.js"></script>
-<script src="/app-common.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const ST = { submitted:'待复现确认', confirmed:'已确认', scheduled:'已排期', fixed:'已修复',
@@ -254,7 +253,7 @@ function fmtVer(v) { v = String(v || ''); return /^[vV]/.test(v) ? v : 'v' + v; 
 function itemHtml(x) {
   const tags = (x.tags || []).map(t => '<span class="tag-chip">' + esc(t) + '</span>').join('');
   const rel = x.release_version ? '<span class="rel-chip" title="关联版本">🚀 ' + esc(fmtVer(x.release_version)) + '</span>' : '';
-  const tasks = x.open_tasks ? ' <span title="未完成工作项">🔨' + x.open_tasks + '</span>' : '';
+  const tasks = x.open_tasks ? ' <span class="mono" title="未完成工作项">🔨' + x.open_tasks + '</span>' : '';
   return '<a class="row-item" href="/index.html?project=all&req=' + x.id + '" onclick="rowClick(event, ' + x.id + ')">'
     + '<div class="ri-top"><span class="rid">#' + x.id + '</span>'
     + '<span class="ri-title">' + esc(x.title) + '</span>'
@@ -265,7 +264,7 @@ function itemHtml(x) {
     + '<div class="ri-meta"><span>' + esc(x.project_name) + '</span>'
     + '<span class="badge ty-' + x.type + '">' + (TY[x.type] || x.type) + '</span>'
     + rel + tags + tasks
-    + '<span style="margin-left:auto">' + esc(x.creator_name || '') + ' · ' + fmtTime(x.updated_at) + '</span></div></a>';
+    + '<span class="mono" style="margin-left:auto">' + esc(x.creator_name || '') + ' · ' + fmtTime(x.updated_at) + '</span></div></a>';
 }
 
 // ---------- 状态快捷菜单（列表页直接改状态） ----------
@@ -448,12 +447,12 @@ function renderInfo() {
     + '<span>' + esc(r.project_name) + '</span>'
     + '<span class="badge ty-' + r.type + '">' + (TY[r.type] || r.type) + '</span>'
     + '<span>提单：' + esc(r.creator_name || '-') + '</span>'
-    + '<span>' + fmtTime(r.created_at) + '</span>'
+    + '<span class="mono">' + fmtTime(r.created_at) + '</span>'
     + '<span>通道：' + esc(r.channel) + '</span></div>'
     + ((r.severity || r.root_cause || r.ref_code) ? '<div class="ri-meta" style="margin-top:4px">'
-      + (r.severity ? '<span class="badge" style="background:' + (SEVC[r.severity] || '#eee') + ';color:#fff">' + (SEVN[r.severity] || r.severity) + '</span>' : '')
+      + (r.severity ? '<span class="badge severity" style="color:' + (SEVC[r.severity] || '#eee') + '">' + (SEVN[r.severity] || r.severity) + '</span>' : '')
       + (r.root_cause ? '<span>根因：' + (RCN[r.root_cause] || r.root_cause) + '</span>' : '')
-      + (r.ref_code ? '<span>关联编号：' + esc(r.ref_code) + '</span>' : '')
+      + (r.ref_code ? '<span class="mono">关联编号：' + esc(r.ref_code) + '</span>' : '')
       + '</div>' : '')
     + (r.description ? '<div style="margin-top:10px;white-space:pre-wrap">' + esc(r.description) + '</div>' : '')
     + dup + relsel + rc
@@ -633,7 +632,7 @@ function renderEvents() {
     return '<div class="evt"><span class="who">' + esc(e.actor_name || '-') + '</span>'
       + '<span>' + (ACTN[e.action] || e.action) + '</span>'
       + (e.action === 'comment' && e.ctype && e.ctype !== 'normal'
-        ? '<span class="badge" style="color:#fff;background:' + (CTC[e.ctype] || '#888') + '">' + (CTN[e.ctype] || e.ctype) + '</span>' : '')
+        ? '<span class="badge" style="color:' + (CTC[e.ctype] || '#888') + '">' + (CTN[e.ctype] || e.ctype) + '</span>' : '')
       + '<span class="when">' + fmtTime(e.created_at) + '</span>'
       + (body ? '<div>' + body + '</div>' : '') + '</div>';
   }).join('');

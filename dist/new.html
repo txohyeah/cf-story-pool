@@ -6,9 +6,14 @@
 <title>新需求 · 需求池</title>
 <link rel="stylesheet" href="/style.css">
 </head>
-<body>
+<body class="page-new">
 <div class="topbar" id="tb">
   <span class="brand">＋ 新需求</span>
+  <a class="btn small" href="/index.html">需求</a>
+  <a class="btn small" href="/docs.html">文档</a>
+  <a class="btn small" href="/releases.html">版本</a>
+  <a class="btn small" href="/testcases.html">用例</a>
+  <a class="btn small" href="/index.html?project=all" title="在需求列表中筛选并导出">导出</a>
   <span class="sp"></span>
   <a class="btn small" href="javascript:history.length>1?history.back():location.href='/'" id="tb-back">返回</a>
 </div>
@@ -19,7 +24,8 @@
   }
 </script>
 <div class="wrap" style="max-width:720px">
-  <div class="card">
+  <div class="card intake-card">
+    <div class="page-heading"><span class="eyebrow">需求 / NEW</span><h1>记录一条需求</h1><p class="sub">描述现象、复现步骤与期望结果，便于团队确认和跟进。</p></div>
     <div class="fld-row">
       <label class="fld" style="min-width:180px"><span>研发项目 *</span><select id="project"></select></label>
       <label class="fld" style="min-width:150px"><span>类型</span><select id="type">

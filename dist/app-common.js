@@ -52,7 +52,7 @@
   UI.showConfirm = function (msg, onOk) {
     const ov = document.createElement('div');
     ov.className = 'modal-overlay'; ov.style.zIndex = 95;
-    ov.innerHTML = '<div class="modal"><h3>确认操作</h3>'
+    ov.innerHTML = '<div class="modal pool-dialog"><h3>确认操作</h3>'
       + '<div style="margin:10px 0;white-space:pre-wrap;font-size:14px">' + esc(msg) + '</div>'
       + '<div class="modal-btns" style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">'
       + '<button class="btn" id="sc-no">取消</button>'
@@ -69,7 +69,7 @@
     closeOverlay('pwd-overlay');
     const ov = document.createElement('div');
     ov.className = 'modal-overlay'; ov.id = 'pwd-overlay'; ov.style.zIndex = 90;
-    ov.innerHTML = '<div class="modal"><h3>修改密码</h3>'
+    ov.innerHTML = '<div class="modal pool-dialog"><h3>修改密码</h3>'
       + '<label>当前密码<input type="password" id="pw-cur" autocomplete="current-password"></label>'
       + '<label>新密码（至少 6 位）<input type="password" id="pw-new" autocomplete="new-password"></label>'
       + '<label>确认新密码<input type="password" id="pw-new2" autocomplete="new-password"></label>'
@@ -249,7 +249,7 @@
       }
       renderNrThumbs(ov);
     });
-    ov.innerHTML = '<div class="modal" style="width:min(640px,94vw);max-height:92vh;overflow:auto;position:relative">'
+    ov.innerHTML = '<div class="modal pool-dialog intake-dialog" style="width:min(640px,94vw);max-height:92vh;overflow:auto;position:relative">'
       + '<h3 style="margin:0 0 10px">＋ 新需求</h3>'
       + '<div class="fld-row">'
       + '<label class="fld" style="min-width:170px"><span>研发项目 *</span><select id="nr-project"></select></label>'
