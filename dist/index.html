@@ -62,6 +62,8 @@
           </select></label>
           <label class="fld" style="min-width:120px"><span>标签</span><select id="f-tag"></select></label>
           <label class="fld" style="min-width:110px"><span>版本</span><select id="f-release"><option value="">全部</option></select></label>
+          <label class="fld" style="min-width:110px"><span>排序字段</span><select id="f-sort" title="倒序按更新时间为最近优先，按序号为编号从大到小；正序反之"><option value="updated">更新时间</option><option value="id">序号</option></select></label>
+          <label class="fld" style="min-width:90px"><span>排序方向</span><select id="f-order" title="倒序按更新时间为最近优先，按序号为编号从大到小；正序反之"><option value="desc">倒序</option><option value="asc">正序</option></select></label>
           <label class="fld" style="flex:2;min-width:160px"><span>搜索</span>
             <input type="text" id="f-q" placeholder="标题 / 描述关键词；#编号直达"></label>
         </div>
@@ -395,10 +397,10 @@ async function navReq(delta) {
   if (j >= 0 && j < listItems.length) { openReq(listItems[j].id); return; }
   // 本页到头：自动翻页取另一端第一条，过需求可以连续翻
   if (delta > 0 && page < pages) {
-    page += 1; await loadList(); if ($('mw-sync').checked) loadMyWork();
+    page += 1; if (!await loadList()) return; if ($('mw-sync').checked) loadMyWork();
     if (listItems.length) openReq(listItems[0].id);
   } else if (delta < 0 && page > 1) {
-    page -= 1; await loadList(); if ($('mw-sync').checked) loadMyWork();
+    page -= 1; if (!await loadList()) return; if ($('mw-sync').checked) loadMyWork();
     if (listItems.length) openReq(listItems[listItems.length - 1].id);
   }
 }
@@ -672,6 +674,8 @@ function syncUrl() {
   if ($('f-urgency').value) sp.set('urgency', $('f-urgency').value);
   if ($('f-tag').value) sp.set('tag', $('f-tag').value);
   if ($('f-release').value) sp.set('release', $('f-release').value);
+  if ($('f-sort').value !== 'updated') sp.set('sort', $('f-sort').value);
+  if ($('f-order').value !== 'desc') sp.set('order', $('f-order').value);
   const q = $('f-q').value.trim();
   if (q) sp.set('q', q);
   if (page > 1) sp.set('page', String(page));
@@ -694,7 +698,9 @@ function exportCsv() {
   location.href = '/api/export?' + p.toString();
 }
 
+let listRequest = 0;
 async function loadList() {
+  const request = ++listRequest;
   syncUrl();
   const p = new URLSearchParams();  if ($('f-project').value) p.set('project', $('f-project').value);
   if ($('f-status').value) p.set('status', $('f-status').value);
@@ -704,8 +710,11 @@ async function loadList() {
   if ($('f-tag').value) p.set('tag', $('f-tag').value);
   if ($('f-release').value) p.set('release', $('f-release').value);
   if ($('f-q').value.trim()) p.set('q', $('f-q').value.trim());
+  p.set('sort', $('f-sort').value);
+  p.set('order', $('f-order').value);
   p.set('page', page);
   const d = await api('/api/requirements?' + p.toString());
+  if (request !== listRequest) return false;
   pages = d.pages;
   listItems = d.items; // 供详情抽屉「上一条/下一条」按当前筛选顺序导航
   $('list').innerHTML = d.items.length
@@ -714,6 +723,7 @@ async function loadList() {
   $('pager').style.display = d.total > 0 ? '' : 'none';
   $('pinfo').textContent = '第 ' + d.page + ' / ' + d.pages + ' 页 · 共 ' + d.total + ' 条';
   if (drawerOpen) updateNavBtns();
+  return true;
 }
 
 async function loadMyWork() {
@@ -830,6 +840,9 @@ $('f-q').addEventListener('keydown', e => {
 for (const id of ['f-project', 'f-status', 'f-type', 'f-urgency', 'f-severity', 'f-tag', 'f-release']) {
   $(id).addEventListener('change', () => { page = 1; loadList(); if ($('mw-sync').checked) loadMyWork(); });
 }
+for (const id of ['f-sort', 'f-order']) {
+  $(id).addEventListener('change', () => { page = 1; loadList(); });
+}
 // 项目切换 → 标签选项按项目过滤（标签与项目隔离）；版本下拉同步按项目过滤
 $('f-project').addEventListener('change', () => { PoolUI.setProject($('f-project').value); refreshTagFilter(); refreshRelFilter(); });
 $('mw-sync').addEventListener('change', () => loadMyWork());
@@ -873,6 +886,10 @@ window.addEventListener('pagehide', () => {
 
   // 从 URL 恢复上次离开时的筛选/页码（写入动作在 loadList 的 syncUrl 里）
   const SP = new URL(location.href).searchParams;
+  const urlSort = SP.get('sort') ?? 'updated', urlOrder = SP.get('order') ?? 'desc';
+  if (['updated', 'id'].includes(urlSort) && ['asc', 'desc'].includes(urlOrder)) {
+    setSel('f-sort', urlSort); setSel('f-order', urlOrder);
+  }
   const upage = parseInt(SP.get('page'), 10);
   if (upage >= 1) page = upage;
   // 上次离开列表页的滚动位置（pagehide 里记录），取完即清

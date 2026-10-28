@@ -450,6 +450,15 @@ async function apiReqList(request, env, u) {
   const url = new URL(request.url);
   const page = Math.max(1, parseInt(url.searchParams.get('page'), 10) || 1);
   const pageSize = Math.min(50, Math.max(1, parseInt(url.searchParams.get('page_size'), 10) || 50));
+  const sort = url.searchParams.get('sort') ?? 'updated';
+  const order = url.searchParams.get('order') ?? 'desc';
+  const orders = {
+    'updated:desc': 'r.updated_at DESC, r.id DESC',
+    'updated:asc': 'r.updated_at ASC, r.id ASC',
+    'id:desc': 'r.id DESC',
+    'id:asc': 'r.id ASC',
+  };
+  const orderBy = orders[sort + ':' + order] || orders['updated:desc'];
   const where = [];
   const args = [];
   const status = (url.searchParams.get('status') || '').trim();
@@ -504,7 +513,7 @@ async function apiReqList(request, env, u) {
      JOIN projects p ON p.id = r.project_id
      LEFT JOIN users us ON us.id = r.created_by
      LEFT JOIN releases rl ON rl.id = r.release_id
-     ${W} ORDER BY r.updated_at DESC, r.id DESC LIMIT ? OFFSET ?`)
+     ${W} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
     .bind(...args, pageSize, (page - 1) * pageSize).all()).results;
   const ids = items.map(x => x.id);
   let tagMap = new Map();

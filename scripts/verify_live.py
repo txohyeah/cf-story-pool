@@ -554,7 +554,33 @@ def main():
         s, _h, _b = http('GET', path, headers={'Cookie': cookie})
         check(name, s == 200)
 
-    # 19. cookie 文件（pw.py 核对用）
+    # 19. 需求列表排序（复用 botsvc 会话）
+    s, d = jreq('GET', '/api/requirements', cookie=cookie)
+    default_items = d.get('items', [])
+    check('排序: 默认更新时间倒序及编号次序', s == 200 and len(default_items) >= 2
+          and all((a['updated_at'], a['id']) >= (b['updated_at'], b['id'])
+                  for a, b in zip(default_items, default_items[1:])))
+    s, d = jreq('GET', '/api/requirements?sort=id&order=asc', cookie=cookie)
+    items = d.get('items', [])
+    check('排序: 序号正序', s == 200 and len(items) >= 2
+          and all(a['id'] < b['id'] for a, b in zip(items, items[1:])))
+    s, d = jreq('GET', '/api/requirements?sort=id&order=desc', cookie=cookie)
+    items = d.get('items', [])
+    check('排序: 序号倒序', s == 200 and len(items) >= 2
+          and all(a['id'] > b['id'] for a, b in zip(items, items[1:])))
+    s, d = jreq('GET', '/api/requirements?sort=updated&order=asc', cookie=cookie)
+    items = d.get('items', [])
+    check('排序: 更新时间正序', s == 200 and len(items) >= 2
+          and all((a['updated_at'], a['id']) <= (b['updated_at'], b['id'])
+                  for a, b in zip(items, items[1:])))
+    s, d = jreq('GET', '/api/requirements?sort=bogus&order=bogus', cookie=cookie)
+    bogus_items = d.get('items', [])
+    s2, d2 = jreq('GET', '/api/requirements', cookie=cookie)
+    # 相邻双请求互证：非法参数结果必须与紧邻的默认请求一致（防中间新单入库造成时间窗误报）
+    check('排序: 非法参数回退默认', s == 200 and s2 == 200 and len(bogus_items) >= 2
+          and [x['id'] for x in bogus_items] == [x['id'] for x in d2.get('items', [])])
+
+    # 20. cookie 文件（pw.py 核对用）
     fd = os.open(COOKIE_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     os.write(fd, ('%s=%s' % (COOKIE_NAME, cookie.split('=', 1)[1])).encode())
     os.close(fd)
