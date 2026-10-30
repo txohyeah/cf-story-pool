@@ -107,6 +107,7 @@
       <button class="btn small" id="dr-close" title="关闭（Esc）">✕ 关闭</button>
     </div>
 
+    <div id="drawer-refresh-error" role="status" style="display:none;padding:8px;color:#b45309">操作可能已成功，但详情刷新失败 <button class="btn small" id="drawer-refresh-retry">重试</button></div>
     <div class="card" id="info"></div>
 
     <div class="card" id="edit-card" style="display:none">
@@ -309,6 +310,7 @@ function openStatusMenu(ev, id, cur) {
 const ACTN = { create:'📥 创建', status:'🔁 流转', comment:'💬 评论', checklist:'🔨 清单',
   tag:'🏷️ 标签', edit:'✏️ 编辑' };
 let D = null, users = [], allTags = [], curReqId = 0, drawerOpen = false, drawerPushed = false, listItems = [];
+let reqLoadSeq = 0;
 
 function rowClick(ev, id) {
   // 修饰键 / 中键点击放行：浏览器默认新标签打开 href（列表页 + 自动弹该条抽屉）
@@ -332,7 +334,8 @@ function showDrawer() {
 }
 function hideDrawer() {
   $('drawer-overlay').classList.remove('open');
-  drawerOpen = false; curReqId = 0;
+  drawerOpen = false; curReqId = 0; reqLoadSeq++;
+  $('drawer-refresh-error').style.display = 'none';
   document.body.classList.remove('noscroll');
   setTimeout(() => { if (!drawerOpen) $('drawer-overlay').style.display = 'none'; }, 260);
 }
@@ -364,21 +367,44 @@ function syncDrawerFromUrl() {
 }
 window.addEventListener('popstate', syncDrawerFromUrl);
 
-async function loadReq(id) {
-  curReqId = id;
-  $('info').innerHTML = '<div class="sub" style="padding:30px;text-align:center">加载中…</div>';
-  $('edit-card').style.display = 'none';
-  $('att-card').style.display = 'none';
-  for (const cid of ['tags', 'chk', 'atts', 'events']) $(cid).innerHTML = '';
-  $('c-text').value = '';
-  const d = await api('/api/requirements/' + id);
-  if (curReqId !== id) return; // 加载期间已切到别的条
-  if (!d.ok) { $('info').innerHTML = '<div class="err" style="padding:16px">' + esc(d.error || '加载失败') + '</div>'; return; }
-  D = d;
-  relList = await api('/api/releases?project=' + D.req.project_id).then(x => x.items || []).catch(() => []);
-  refreshDrawerDatalist(D.req.project_id); // 标签联想按需求所属项目
-  renderInfo(); renderStatus(); renderTags(); renderChk(); renderAtts(); renderEvents();
-  updateNavBtns();
+async function loadReq(id, { silent = false, reset = null } = {}) {
+  const seq = ++reqLoadSeq;
+  const current = () => drawerOpen && curReqId === id && seq === reqLoadSeq;
+  if (!silent) {
+    curReqId = id;
+    $('drawer-refresh-error').style.display = 'none';
+    $('info').innerHTML = '<div class="sub" style="padding:30px;text-align:center">加载中…</div>';
+    $('edit-card').style.display = 'none';
+    $('att-card').style.display = 'none';
+    for (const cid of ['tags', 'chk', 'atts', 'events']) $(cid).innerHTML = '';
+    $('c-text').value = '';
+  }
+  try {
+    const d = await api('/api/requirements/' + id);
+    if (!current()) return;
+    if (!d.ok) {
+      if (silent) throw new Error(d.error || '加载失败');
+      $('info').innerHTML = '<div class="err" style="padding:16px">' + esc(d.error || '加载失败') + '</div>'; return;
+    }
+    const rels = await api('/api/releases?project=' + d.req.project_id)
+      .then(x => { if (silent && x.ok === false) throw new Error(x.error || '加载失败'); return x.items || []; })
+      .catch(err => { if (silent) throw err; return []; });
+    if (!current()) return;
+    const drawer = document.querySelector('#drawer-overlay .drawer');
+    const scrollTop = silent ? drawer.scrollTop : 0;
+    D = d; relList = rels;
+    refreshDrawerDatalist(D.req.project_id); // 标签联想按需求所属项目
+    renderInfo(); renderStatus(!silent || reset === 'status'); renderTags(); renderChk(); renderAtts(); renderEvents();
+    if (silent && reset === 'edit') $('edit-card').style.display = 'none';
+    updateNavBtns();
+    $('drawer-refresh-error').style.display = 'none';
+    if (silent) drawer.scrollTop = scrollTop;
+  } catch (err) {
+    if (!current()) return;
+    if (!silent) throw err;
+    $('drawer-refresh-retry').onclick = () => loadReq(id, { silent: true, reset });
+    $('drawer-refresh-error').style.display = '';
+  }
 }
 
 function updateNavBtns() {
@@ -482,10 +508,11 @@ function renderInfo() {
   const relEl = $('rel-sel');
   if (relEl) relEl.addEventListener('change', async e => {
     const v = e.target.value;
-    const r = await api('/api/requirements/' + curReqId, {
+    const id = curReqId;
+    const r = await api('/api/requirements/' + id, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ op: 'edit', release_id: v || null }) });
-    if (r.ok) loadReq(curReqId); else alert(r.error || '关联失败');
+    if (r.ok) { if (drawerOpen && curReqId === id) loadReq(id, { silent: true }); } else alert(r.error || '关联失败');
   });
   $('btn-del').onclick = async () => {
     if (!confirm('确定删除需求 #' + r.id + '？不可恢复')) return;
@@ -496,14 +523,20 @@ function renderInfo() {
   };
 }
 
-function renderStatus() {
+function renderStatus(reset = true) {
+  const selected = $('s-next').value;
   const cur = D.req.status;
   // #195：首项为禁用的当前状态占位——打开下拉即可见当前状态，避免误读"默认待确认"
   $('s-next').innerHTML = '<option value="" disabled selected>当前：' + (ST[cur] || cur) + '（选择要移动到的状态）</option>'
     + Object.keys(ST).filter(s => s !== cur)
     .map(s => '<option value="' + s + '">' + ST[s] + '</option>').join('');
-  $('dup-row').style.display = 'none';
-  $('s-note').value = ''; $('s-dup').value = ''; $('s-err').textContent = '';
+  if (reset) {
+    $('dup-row').style.display = 'none';
+    $('s-note').value = ''; $('s-dup').value = ''; $('s-err').textContent = '';
+  } else {
+    if (selected && selected !== cur) $('s-next').value = selected;
+    $('dup-row').style.display = $('s-next').value === 'dup_closed' ? '' : 'none';
+  }
 }
 $('s-next').addEventListener('change', () => {
   $('dup-row').style.display = $('s-next').value === 'dup_closed' ? '' : 'none';
@@ -518,9 +551,10 @@ $('s-go').onclick = async () => {
     if (!t) { $('s-err').textContent = '请填原单 ID'; return; }
     body.duplicate_of = t;
   }
-  const d = await api('/api/requirements/' + curReqId, {
+  const id = curReqId;
+  const d = await api('/api/requirements/' + id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  if (d.ok) { loadReq(curReqId); loadList(); loadMyWork(); }
+  if (d.ok) { if (drawerOpen && curReqId === id) loadReq(id, { silent: true, reset: 'status' }); loadList(); loadMyWork(); }
   else { $('s-err').textContent = d.error || '失败'; }
 };
 
@@ -544,10 +578,11 @@ $('tag-add').onclick = () => {
   saveTags(cur);
 };
 async function saveTags(names) {
-  const d = await api('/api/requirements/' + curReqId, {
+  const id = curReqId;
+  const d = await api('/api/requirements/' + id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ op: 'tags', tags: names }) });
-  if (d.ok) { loadReq(curReqId); loadList(); }
+  if (d.ok) { if (drawerOpen && curReqId === id) loadReq(id, { silent: true }); loadList(); }
 }
 
 function renderChk() {
@@ -564,39 +599,46 @@ function renderChk() {
   }).join('') : '<div class="sub">还没有工作项。建议按顺序拆：产品设计 → 前端开发 → 后端开发</div>';
 }
 $('chk').addEventListener('click', async e => {
+  const id = curReqId;
   if (e.target.classList.contains('chk-dot')) {
     const to = e.target.classList.contains('todo') ? 'doing'
       : e.target.classList.contains('doing') ? 'done' : 'todo';
     await api('/api/checklist/' + e.target.dataset.id, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: to }) });
-    loadReq(curReqId); loadList(); loadMyWork();
+    if (drawerOpen && curReqId === id) loadReq(id, { silent: true }); loadList(); loadMyWork();
   } else if (e.target.dataset.del) {
     if (!confirm('删除该工作项？')) return;
     await api('/api/checklist/' + e.target.dataset.del, { method: 'DELETE' });
-    loadReq(curReqId); loadList(); loadMyWork();
+    if (drawerOpen && curReqId === id) loadReq(id, { silent: true }); loadList(); loadMyWork();
   }
 });
 $('chk').addEventListener('change', async e => {
+  const id = curReqId;
   if (e.target.classList.contains('ck-as')) {
     await api('/api/checklist/' + e.target.dataset.id, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ assignee_id: e.target.value || null }) });
-    loadReq(curReqId); loadMyWork();
+    if (drawerOpen && curReqId === id) loadReq(id, { silent: true }); loadMyWork();
   }
 });
 $('ck-add').onclick = async () => {
-  const content = $('ck-content').value.trim();
+  const rawContent = $('ck-content').value;
+  const content = rawContent.trim();
   if (!content) return;
-  await api('/api/requirements/' + curReqId + '/checklist', {
+  const id = curReqId;
+  await api('/api/requirements/' + id + '/checklist', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content, assignee_id: $('ck-assignee').value || null }) });
-  $('ck-content').value = '';
-  loadReq(curReqId); loadList(); loadMyWork();
+  if (drawerOpen && curReqId === id) {
+    if ($('ck-content').value === rawContent) $('ck-content').value = '';
+    loadReq(id, { silent: true });
+  }
+  loadList(); loadMyWork();
 };
 
 function renderAtts() {
-  if (!D.attachments.length) return;
+  if (!D.attachments.length) { $('atts').innerHTML = ''; $('att-card').style.display = 'none'; return; }
   $('att-card').style.display = '';
   $('atts').innerHTML = D.attachments.map(a =>
     '<a href="/api/files/' + a.r2_key + '" target="_blank" style="text-align:center">'
@@ -643,21 +685,27 @@ $('c-filter').addEventListener('change', renderEvents);
 
 $('e-save').onclick = async () => {
   $('e-err').textContent = '';
-  const d = await api('/api/requirements/' + curReqId, {
+  const id = curReqId;
+  const d = await api('/api/requirements/' + id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ op: 'edit', title: $('e-title').value, description: $('e-desc').value,
       type: $('e-type').value, urgency: $('e-urgency').value, project_id: $('e-project').value,
       severity: $('e-severity').value, root_cause: $('e-root-cause').value, ref_code: $('e-ref-code').value.trim() }) });
-  if (d.ok) { loadReq(curReqId); loadList(); loadMyWork(); }
-  else $('e-err').textContent = d.error || '失败';
+  if (d.ok) { if (drawerOpen && curReqId === id) loadReq(id, { silent: true, reset: 'edit' }); loadList(); loadMyWork(); }
+  else if (drawerOpen && curReqId === id) $('e-err').textContent = d.error || '失败';
 };
 $('c-go').onclick = async () => {
-  const text = $('c-text').value.trim();
+  const rawText = $('c-text').value;
+  const text = rawText.trim();
   if (!text) return;
-  const d = await api('/api/requirements/' + curReqId + '/comment', {
+  const id = curReqId;
+  const d = await api('/api/requirements/' + id + '/comment', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, ctype: $('c-ctype').value }) });
-  if (d.ok) { $('c-text').value = ''; loadReq(curReqId); }
+  if (d.ok && drawerOpen && curReqId === id) {
+    if ($('c-text').value === rawText) $('c-text').value = '';
+    loadReq(id, { silent: true });
+  }
 };
 
 // ---------- 列表状态与 URL 同步（详情页返回后恢复筛选/页码） ----------
@@ -852,7 +900,7 @@ window.addEventListener('pageshow', e => {
   if (!e.persisted) return;
   if ($('view-list').style.display !== 'none') {
     loadList(); loadMyWork();
-    if (curReqId) loadReq(curReqId); // 抽屉开着时数据一并刷新
+    if (curReqId) { const id = curReqId; loadReq(id, { silent: true }); } // 抽屉开着时数据一并刷新
   }
   else loadProjects();
 });
