@@ -239,6 +239,17 @@ def main():
     s, d = jreq('POST', '/api/requirements/%d/comment' % aid, {'text': 'verify 评论'}, cookie=cookie)
     s2, d2 = jreq('GET', '/api/requirements/%d' % aid, cookie=cookie)
     check('评论入流水', d.get('ok') and any(e['action'] == 'comment' for e in d2['events']))
+    comment = next((e for e in d2.get('events', []) if e.get('action') == 'comment' and e.get('detail') == 'verify 评论'), None)
+    comment_id = comment['id'] if comment else 0
+    s, d = jreq('PUT', '/api/requirements/%d/comment/%d' % (aid, comment_id), {'text': 'verify 评论已编辑'}, cookie=cookie)
+    s2, d2 = jreq('GET', '/api/requirements/%d' % aid, cookie=cookie)
+    check('CM 评论编辑留痕', s == 200 and d.get('ok') and any(e.get('id') == comment_id and e.get('detail') == 'verify 评论已编辑' for e in d2.get('events', []))
+          and any(e.get('action') == 'comment_edit' and e.get('detail') == 'verify 评论已编辑' for e in d2.get('events', [])))
+    # CM 越权编辑跳过：脚本仅有 botsvc 的 cookie，没有第二个账号的现成会话。
+    s, d = jreq('DELETE', '/api/requirements/%d/comment/%d' % (aid, comment_id), cookie=cookie)
+    s2, d2 = jreq('GET', '/api/requirements/%d' % aid, cookie=cookie)
+    check('CM 评论删除留痕', s == 200 and d.get('ok') and not any(e.get('id') == comment_id for e in d2.get('events', []))
+          and any(e.get('action') == 'comment_delete' and e.get('detail') == '（已删除一条评论，原文不留存）' for e in d2.get('events', [])))
 
     # 12. 标签替换
     s, d = jreq('PATCH', '/api/requirements/%d' % aid, {'op': 'tags', 'tags': ['verify自检', 'AI整理']},
@@ -354,6 +365,13 @@ def main():
             s, d = jreq('GET', '/api/docs/%d' % doc_id, cookie=cookie)
             cms = d.get('comments', [])
             check('文档评论绑版本', d.get('ok') and len(cms) == 1 and cms[0].get('doc_version') == 2)
+            cm_id = cms[0]['id'] if cms else 0
+            s, d = jreq('PUT', '/api/docs/%d/comment/%d' % (doc_id, cm_id), {'content': '[verify] 评审意见已编辑'}, cookie=cookie)
+            s2, d2 = jreq('GET', '/api/docs/%d' % doc_id, cookie=cookie)
+            check('CM 文档评论编辑', s == 200 and d.get('ok') and any(c.get('id') == cm_id and c.get('content') == '[verify] 评审意见已编辑' and c.get('doc_version') == 2 for c in d2.get('comments', [])))
+            s, d = jreq('DELETE', '/api/docs/%d/comment/%d' % (doc_id, cm_id), cookie=cookie)
+            s2, d2 = jreq('GET', '/api/docs/%d' % doc_id, cookie=cookie)
+            check('CM 文档评论删除', s == 200 and d.get('ok') and not any(c.get('id') == cm_id for c in d2.get('comments', [])))
             s, d = jreq('PATCH', '/api/docs/%d' % doc_id, {'status': 'review'}, cookie=cookie)
             s, d = jreq('PATCH', '/api/docs/%d' % doc_id, {'status': 'approved'}, cookie=cookie)
             s, d = jreq('GET', '/api/docs/%d' % doc_id, cookie=cookie)
@@ -508,6 +526,12 @@ def main():
                 cms = [e for e in d.get('events', []) if e.get('action') == 'comment']
                 check('R7 评论类型入库(枚举外回退normal)', len(cms) == 2
                       and {c.get('ctype') for c in cms} == {'ac', 'normal'})
+                ac = next((c for c in cms if c.get('ctype') == 'ac'), None)
+                ac_id = ac['id'] if ac else 0
+                s, d = jreq('PUT', '/api/requirements/%d/comment/%d' % (r7, ac_id), {'text': '导出应含此条（已编辑）', 'ctype': 'normal'}, cookie=cookie)
+                s2, d2 = jreq('GET', '/api/requirements/%d' % r7, cookie=cookie)
+                check('CM 验收标准评论编辑', s == 200 and d.get('ok') and any(e.get('id') == ac_id and e.get('detail') == '导出应含此条（已编辑）' and e.get('ctype') == 'ac' for e in d2.get('events', []))
+                      and any(e.get('action') == 'comment_edit' and e.get('ctype') == 'ac' and e.get('detail') == '导出应含此条（已编辑）' for e in d2.get('events', [])))
                 s2, _h, raw = http('GET', '/api/export?project=%d' % dpid, headers={'Cookie': cookie})
                 txt = raw.decode('utf-8-sig', errors='replace')
                 check('R7 导出验收标准汇总(ctype=ac口径)', '导出应含此条' in txt)

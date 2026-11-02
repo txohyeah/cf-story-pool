@@ -307,7 +307,7 @@ function openStatusMenu(ev, id, cur) {
 }
 
 // ---------- 需求详情抽屉（列表页内直接看/改需求，Esc 或浏览器返回键关闭） ----------
-const ACTN = { create:'📥 创建', status:'🔁 流转', comment:'💬 评论', checklist:'🔨 清单',
+const ACTN = { create:'📥 创建', status:'🔁 流转', comment:'💬 评论', comment_edit:'✏️ 评论编辑', comment_delete:'🗑 评论删除', checklist:'🔨 清单',
   tag:'🏷️ 标签', edit:'✏️ 编辑' };
 let D = null, users = [], allTags = [], curReqId = 0, drawerOpen = false, drawerPushed = false, listItems = [];
 let reqLoadSeq = 0;
@@ -658,7 +658,7 @@ function renderEvents() {
     let body = '';
     let j = null;
     try { j = JSON.parse(e.detail); } catch (x) { j = null; }
-    if (e.action === 'comment') body = '<div class="body">' + esc(e.detail) + '</div>';
+    if (['comment', 'comment_edit', 'comment_delete'].includes(e.action)) body = '<div class="body">' + esc(e.detail) + '</div>';
     else if (e.action === 'status' && j) {
       body = (j.from ? (ST[j.from] || j.from) + ' → ' : '')
         + '<b>' + (ST[j.to] || j.to) + '</b>' + (j.note ? '：' + esc(j.note) : '');
@@ -678,10 +678,33 @@ function renderEvents() {
       + (e.action === 'comment' && e.ctype && e.ctype !== 'normal'
         ? '<span class="badge" style="color:' + (CTC[e.ctype] || '#888') + '">' + (CTN[e.ctype] || e.ctype) + '</span>' : '')
       + '<span class="when">' + fmtTime(e.created_at) + '</span>'
-      + (body ? '<div>' + body + '</div>' : '') + '</div>';
+      + (e.action === 'comment' && me && e.actor_id === me.user_id ? ' <button onclick="editComment(' + e.id + ')">编辑</button> <button onclick="deleteComment(' + e.id + ')">删除</button>' : '')
+      + (body ? '<div id="comment-body-' + e.id + '">' + body + '</div>' : '') + '</div>';
   }).join('');
 }
 $('c-filter').addEventListener('change', renderEvents);
+function editComment(eid) {
+  const e = D.events.find(x => x.id === eid && x.action === 'comment');
+  if (!e) return;
+  if (e.ctype === 'ac' && !confirm('该条参与验收标准汇总，确定编辑？')) return;
+  const box = $('comment-body-' + eid);
+  box.innerHTML = '<textarea maxlength="2000" style="width:100%"></textarea><button>保存</button> <button>取消</button>';
+  const ta = box.querySelector('textarea'); ta.value = e.detail;
+  const buttons = box.querySelectorAll('button');
+  buttons[0].onclick = async () => {
+    const id = curReqId;
+    const d = await api('/api/requirements/' + id + '/comment/' + eid, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: ta.value }) });
+    if (d.ok) { if (drawerOpen && curReqId === id) loadReq(id, { silent: true }); } else alert(d.error || '保存失败');
+  };
+  buttons[1].onclick = renderEvents;
+}
+async function deleteComment(eid) {
+  const e = D.events.find(x => x.id === eid && x.action === 'comment');
+  if (!e || !confirm(e.ctype === 'ac' ? '该条参与验收标准汇总，确定删除？' : '确定删除这条评论？')) return;
+  const id = curReqId;
+  const d = await api('/api/requirements/' + id + '/comment/' + eid, { method: 'DELETE' });
+  if (d.ok) { if (drawerOpen && curReqId === id) loadReq(id, { silent: true }); } else alert(d.error || '删除失败');
+}
 
 $('e-save').onclick = async () => {
   $('e-err').textContent = '';

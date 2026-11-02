@@ -615,7 +615,7 @@ async function apiReqDetail(request, env, u, id) {
        FROM checklist_items c LEFT JOIN users us ON us.id = c.assignee_id
        WHERE c.req_id = ? ORDER BY c.sort_order, c.id`).bind(id).all(),
     env.DB.prepare(
-      `SELECT e.id, e.action, e.detail, e.created_at, e.ctype, us.display_name AS actor_name
+      `SELECT e.id, e.actor_id, e.action, e.detail, e.created_at, e.ctype, us.display_name AS actor_name
        FROM events e LEFT JOIN users us ON us.id = e.actor_id
        WHERE e.req_id = ? ORDER BY e.created_at ASC, e.id ASC`).bind(id).all(),
     r.duplicate_of
@@ -754,6 +754,27 @@ async function apiComment(request, env, u, id) {
     `INSERT INTO events (req_id, actor_id, action, detail, ctype) VALUES (?, ?, 'comment', ?, ?)`)
     .bind(id, u.userId, text, ctype).run();
   await env.DB.prepare('UPDATE requirements SET updated_at = ? WHERE id = ?').bind(nowIso(), id).run();
+  return json({ ok: true });
+}
+
+async function apiCommentChange(request, env, u, id, eid) {
+  const c = await env.DB.prepare("SELECT actor_id, ctype FROM events WHERE id = ? AND req_id = ? AND action = 'comment'").bind(eid, id).first();
+  if (!c) return json({ error: '评论不存在' }, 404);
+  if (c.actor_id !== u.userId && (request.method !== 'DELETE' || u.role !== 'admin')) return json({ error: '无权操作' }, 403);
+  let stmts;
+  if (request.method === 'PUT') {
+    const body = await readApiBody(request);
+    const text = (body.text || '').trim().slice(0, 2000);
+    if (!text) return json({ error: '评论不能为空' }, 400);
+    stmts = [env.DB.prepare("UPDATE events SET detail = ? WHERE id = ? AND req_id = ? AND action = 'comment'").bind(text, eid, id),
+      env.DB.prepare("INSERT INTO events (req_id, actor_id, action, detail, ctype) VALUES (?, ?, 'comment_edit', ?, ?)").bind(id, u.userId, text, c.ctype)];
+  } else {
+    // 留痕 INSERT 必须在 DELETE 之前：events.id 无 AUTOINCREMENT，先删后插会让 comment_delete 行复用被删评论的 rowid（2026-11-02 越权补测 B 场景实锤）
+    stmts = [env.DB.prepare("INSERT INTO events (req_id, actor_id, action, detail, ctype) VALUES (?, ?, 'comment_delete', ?, 'normal')").bind(id, u.userId, '（已删除一条评论，原文不留存）'),
+      env.DB.prepare("DELETE FROM events WHERE id = ? AND req_id = ? AND action = 'comment'").bind(eid, id)];
+  }
+  stmts.push(env.DB.prepare('UPDATE requirements SET updated_at = ? WHERE id = ?').bind(nowIso(), id));
+  await env.DB.batch(stmts);
   return json({ ok: true });
 }
 
@@ -913,7 +934,7 @@ async function apiDocDetail(request, env, u, id) {
      FROM doc_versions v LEFT JOIN users u ON u.id = v.author_id
      WHERE v.doc_id = ? ORDER BY v.version DESC`).bind(id).all()).results;
   const comments = (await env.DB.prepare(
-    `SELECT c.id, c.doc_version, c.content, c.created_at, u.display_name AS user
+    `SELECT c.id, c.user_id, c.doc_version, c.content, c.created_at, u.display_name AS user
      FROM doc_comments c JOIN users u ON u.id = c.user_id
      WHERE c.doc_id = ? ORDER BY c.created_at ASC`).bind(id).all()).results;
   return json({ ok: true, doc: d, content_md: cur ? cur.content_md : '', versions, comments });
@@ -990,6 +1011,21 @@ async function apiDocComment(request, env, u, id) {
     'INSERT INTO doc_comments (doc_id, doc_version, user_id, content) VALUES (?, ?, ?, ?)')
     .bind(id, ver, u.userId, text).run();
   await env.DB.prepare('UPDATE docs SET updated_at = ? WHERE id = ?').bind(nowIso(), id).run();
+  return json({ ok: true });
+}
+
+async function apiDocCommentChange(request, env, u, id, cid) {
+  const c = await env.DB.prepare('SELECT user_id FROM doc_comments WHERE id = ? AND doc_id = ?').bind(cid, id).first();
+  if (!c) return json({ error: '评论不存在' }, 404);
+  if (c.user_id !== u.userId && (request.method !== 'DELETE' || u.role !== 'admin')) return json({ error: '无权操作' }, 403);
+  if (request.method === 'PUT') {
+    const body = await readApiBody(request);
+    const text = String(body.content || '').trim().slice(0, 2000);
+    if (!text) return json({ error: '评论不能为空' }, 400);
+    await env.DB.prepare('UPDATE doc_comments SET content = ? WHERE id = ? AND doc_id = ?').bind(text, cid, id).run();
+  } else {
+    await env.DB.prepare('DELETE FROM doc_comments WHERE id = ? AND doc_id = ?').bind(cid, id).run();
+  }
   return json({ ok: true });
 }
 
@@ -1501,6 +1537,8 @@ async function handleRequest(request, env) {
       if (dvm && method === 'GET') return apiDocVersion(request, env, parseInt(dvm[1], 10), parseInt(dvm[2], 10));
       const dcm = p.match(/^\/api\/docs\/(\d+)\/comment$/);
       if (dcm && method === 'POST') return apiDocComment(request, env, u, parseInt(dcm[1], 10));
+      const dcitem = p.match(/^\/api\/docs\/(\d+)\/comment\/(\d+)$/);
+      if (dcitem && (method === 'PUT' || method === 'DELETE')) return apiDocCommentChange(request, env, u, parseInt(dcitem[1], 10), parseInt(dcitem[2], 10));
       if (p === '/api/upload' && method === 'POST') return apiUpload(request, env, u);
       if (p.startsWith('/api/files/') && method === 'GET') return apiFileGet(request, env, p.slice('/api/files/'.length));
       if (p === '/api/requirements' && method === 'GET') return apiReqList(request, env, u);
@@ -1514,6 +1552,8 @@ async function handleRequest(request, env) {
       }
       const cm = p.match(/^\/api\/requirements\/(\d+)\/comment$/);
       if (cm && method === 'POST') return apiComment(request, env, u, parseInt(cm[1], 10));
+      const citem = p.match(/^\/api\/requirements\/(\d+)\/comment\/(\d+)$/);
+      if (citem && (method === 'PUT' || method === 'DELETE')) return apiCommentChange(request, env, u, parseInt(citem[1], 10), parseInt(citem[2], 10));
       const km = p.match(/^\/api\/requirements\/(\d+)\/checklist$/);
       if (km && method === 'POST') return apiChkAdd(request, env, u, parseInt(km[1], 10));
       const ki = p.match(/^\/api\/checklist\/(\d+)$/);

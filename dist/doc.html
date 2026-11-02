@@ -96,7 +96,7 @@ async function init() {
   const id = parseInt(new URLSearchParams(location.search).get('id'), 10);
   if (!id) { location.href = '/docs.html'; return; }
   const m = await api('/api/me');
-  me = m && m.user;
+  me = m;
   if (new URLSearchParams(location.search).get('edit') === '1') document.body.classList.add('editing');
   await load(id);
 }
@@ -131,9 +131,31 @@ function renderComments() {
   $('cm-list').innerHTML = comments.map(c => `
     <div class="cm-row">
       <div><strong>${esc(c.user)}</strong> <span style="color:#4f46e5;font-size:12px">针对 v${c.doc_version}</span>
-        <span style="color:#aaa;font-size:12px"> ${esc((c.created_at || '').slice(0, 16).replace('T', ' '))}</span></div>
-      <div style="white-space:pre-wrap;margin-top:2px">${esc(c.content)}</div>
+        <span style="color:#aaa;font-size:12px"> ${esc((c.created_at || '').slice(0, 16).replace('T', ' '))}</span>
+        ${me && c.user_id === me.user_id ? `<button onclick="editDocComment(${c.id})">编辑</button> <button onclick="deleteDocComment(${c.id})">删除</button>` : ''}</div>
+      <div id="doc-comment-${c.id}" style="white-space:pre-wrap;margin-top:2px">${esc(c.content)}</div>
     </div>`).join('') || '<div class="sub" style="color:#aaa;padding:8px 0">暂无评论</div>';
+}
+
+function editDocComment(cid) {
+  const c = comments.find(x => x.id === cid);
+  if (!c) return;
+  const box = $('doc-comment-' + cid);
+  box.innerHTML = '<textarea maxlength="2000" style="width:100%"></textarea><button>保存</button> <button>取消</button>';
+  const ta = box.querySelector('textarea'); ta.value = c.content;
+  const buttons = box.querySelectorAll('button');
+  buttons[0].onclick = async () => {
+    const id = doc.id;
+    const r = await api(`/api/docs/${id}/comment/${cid}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: ta.value }) });
+    if (r && r.ok) load(id); else alert((r && r.error) || '保存失败');
+  };
+  buttons[1].onclick = renderComments;
+}
+async function deleteDocComment(cid) {
+  if (!confirm('确定删除这条评论？')) return;
+  const id = doc.id;
+  const r = await api(`/api/docs/${id}/comment/${cid}`, { method: 'DELETE' });
+  if (r && r.ok) load(id); else alert((r && r.error) || '删除失败');
 }
 
 async function viewHistory(v) {
