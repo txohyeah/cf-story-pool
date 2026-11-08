@@ -183,7 +183,8 @@
     </div>
 
     <div class="card">
-      <h3>💬 评论</h3>
+      <h3>💬 评论 <span class="badge" id="comment-count">×0</span></h3>
+      <div id="comments"></div>
       <div class="fld-row" style="margin-bottom:6px">
         <label class="fld" style="min-width:150px"><span>类型</span><select id="c-ctype">
           <option value="normal">普通评论</option>
@@ -376,7 +377,8 @@ async function loadReq(id, { silent = false, reset = null } = {}) {
     $('info').innerHTML = '<div class="sub" style="padding:30px;text-align:center">加载中…</div>';
     $('edit-card').style.display = 'none';
     $('att-card').style.display = 'none';
-    for (const cid of ['tags', 'chk', 'atts', 'events']) $(cid).innerHTML = '';
+    for (const cid of ['tags', 'chk', 'atts', 'comments', 'events']) $(cid).innerHTML = '';
+    $('comment-count').textContent = '×0';
     $('c-text').value = '';
   }
   try {
@@ -394,7 +396,7 @@ async function loadReq(id, { silent = false, reset = null } = {}) {
     const scrollTop = silent ? drawer.scrollTop : 0;
     D = d; relList = rels;
     refreshDrawerDatalist(D.req.project_id); // 标签联想按需求所属项目
-    renderInfo(); renderStatus(!silent || reset === 'status'); renderTags(); renderChk(); renderAtts(); renderEvents();
+    renderInfo(); renderStatus(!silent || reset === 'status'); renderTags(); renderChk(); renderAtts(); renderComments(); renderEvents();
     if (silent && reset === 'edit') $('edit-card').style.display = 'none';
     updateNavBtns();
     $('drawer-refresh-error').style.display = 'none';
@@ -647,18 +649,33 @@ function renderAtts() {
     + esc(a.orig_name || '图片') + '</div></a>').join('');
 }
 
-function renderEvents() {
-  const CN = { todo: '待办', doing: '进行中', done: '完成' };
-  const cf = $('c-filter') ? $('c-filter').value : '';
+function renderComments() {
+  const cf = $('c-filter').value;
   const CTN = { ac: '验收标准' };
   const CTC = { ac: '#4f46e5' };
+  const comments = D.events.filter(e => e.action === 'comment');
+  $('comment-count').textContent = '×' + comments.length;
+  $('comments').innerHTML = comments
+    .filter(e => !cf || (e.ctype || 'normal') === cf)
+    .map(e => '<div class="cmt"><span class="who">' + esc(e.actor_name || '-') + '</span>'
+      + (e.ctype && e.ctype !== 'normal'
+        ? '<span class="badge" style="color:' + esc(CTC[e.ctype] || '#888') + '">' + esc(CTN[e.ctype] || e.ctype) + '</span>' : '')
+      + '<span class="when">' + esc(fmtTime(e.created_at)) + '</span>'
+      + (me && e.actor_id === me.user_id ? ' <button onclick="editComment(' + Number(e.id) + ')">编辑</button> <button onclick="deleteComment(' + Number(e.id) + ')">删除</button>' : '')
+      + '<div id="comment-body-' + Number(e.id) + '"><div class="body">' + esc(e.detail) + '</div></div></div>')
+    .join('') || '<div class="sub">暂无评论</div>';
+}
+
+function renderEvents() {
+  const CN = { todo: '待办', doing: '进行中', done: '完成' };
   $('events').innerHTML = D.events
-    .filter(e => !(e.action === 'comment' && cf && (e.ctype || 'normal') !== cf))
+    .filter(e => e.action !== 'comment')
     .map(e => {
     let body = '';
     let j = null;
     try { j = JSON.parse(e.detail); } catch (x) { j = null; }
-    if (['comment', 'comment_edit', 'comment_delete'].includes(e.action)) body = '<div class="body">' + esc(e.detail) + '</div>';
+    if (e.action === 'comment_edit') body = '';
+    else if (e.action === 'comment_delete') body = '<div class="body">（已删除一条评论，原文不留存）</div>';
     else if (e.action === 'status' && j) {
       body = (j.from ? (ST[j.from] || j.from) + ' → ' : '')
         + '<b>' + (ST[j.to] || j.to) + '</b>' + (j.note ? '：' + esc(j.note) : '');
@@ -675,14 +692,11 @@ function renderEvents() {
     }
     return '<div class="evt"><span class="who">' + esc(e.actor_name || '-') + '</span>'
       + '<span>' + (ACTN[e.action] || e.action) + '</span>'
-      + (e.action === 'comment' && e.ctype && e.ctype !== 'normal'
-        ? '<span class="badge" style="color:' + (CTC[e.ctype] || '#888') + '">' + (CTN[e.ctype] || e.ctype) + '</span>' : '')
       + '<span class="when">' + fmtTime(e.created_at) + '</span>'
-      + (e.action === 'comment' && me && e.actor_id === me.user_id ? ' <button onclick="editComment(' + e.id + ')">编辑</button> <button onclick="deleteComment(' + e.id + ')">删除</button>' : '')
       + (body ? '<div id="comment-body-' + e.id + '">' + body + '</div>' : '') + '</div>';
-  }).join('');
+  }).join('') || '<div class="sub">暂无操作记录</div>';
 }
-$('c-filter').addEventListener('change', renderEvents);
+$('c-filter').addEventListener('change', renderComments);
 function editComment(eid) {
   const e = D.events.find(x => x.id === eid && x.action === 'comment');
   if (!e) return;
@@ -696,7 +710,7 @@ function editComment(eid) {
     const d = await api('/api/requirements/' + id + '/comment/' + eid, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: ta.value }) });
     if (d.ok) { if (drawerOpen && curReqId === id) loadReq(id, { silent: true }); } else alert(d.error || '保存失败');
   };
-  buttons[1].onclick = renderEvents;
+  buttons[1].onclick = renderComments;
 }
 async function deleteComment(eid) {
   const e = D.events.find(x => x.id === eid && x.action === 'comment');
