@@ -36,7 +36,7 @@ PROJ_A = get('project_a', '项目A')
 PROJ_B = get('project_b', '项目B')
 TEST_USER = get('test_user', 'botsvc')
 PASS_FILE = os.path.join(WORKSPACE, '.secrets', get('test_pass_file', 'pool_test_pass'))
-COOKIE_FILE = os.path.join(WORKSPACE, '.secrets', 'pool-cookie.txt')
+COOKIE_FILE = os.path.join(WORKSPACE, '.secrets', get('cookie_file', 'pool-cookie.txt'))
 COOKIE_NAME = 'storypool_auth'
 
 _results = []
