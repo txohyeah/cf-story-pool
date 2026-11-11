@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""cf-story-pool 的 D1 桥接（照抄 既有项目/scripts/cf_d1.py，改库名/项目名）。
-token 从 workspace 的 .secrets/cf_api_token 读取，不回显。
+"""cf-story-pool 的 D1 桥接（同发布工具族模板，改库名/项目名）。
+token 从本地未入库的凭据文件读取，不回显。
 用法：
   python3 scripts/cf_d1.py create-bound      # 建库+绑定
   python3 scripts/cf_d1.py exec <file.sql>   # 执行 SQL 文件（按 ';\\n' 切分）

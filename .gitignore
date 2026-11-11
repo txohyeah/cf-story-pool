@@ -8,3 +8,16 @@ data/import_v15_state.json
 
 # 本地生成的真实用户密码哈希，不进入版本控制
 data/seed_users.sql
+
+# 本地私有配置（真实账号表/项目名/凭据文件名），绝不入库
+data/local_config.json
+
+# 客户现场资料与批量数据导入件：一律留在本地私有目录，不进公开仓库
+data/import_smart_design_v1_state.json
+data/backups/pool_p1_*.json
+data/backups/releases_before_*.json
+reports/版本测试报告-1.2-*.md
+reports/项目数据包-*.json
+scripts/import_yuque_v15.py
+scripts/import_smart_design_v1.py
+执行记录/

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""R2 桶创建 + 绑定到 Pages 项目（cf-story-pool）。token: .secrets/cf_api_token（不回显）。
+"""R2 桶创建 + 绑定到 Pages 项目。token 从本地未入库凭据文件读取（不回显）。
 用法：
   python3 scripts/cf_r2.py create-bound   # 建桶 + 绑定到 Pages 项目（production & preview）
   python3 scripts/cf_r2.py info           # 查看桶与绑定状态

@@ -1,5 +1,5 @@
 // cf-story-pool 需求池 — CF Pages + D1（附件存 D1 BLOB；R2 预留未启用）
-// 认证/会话/限速照抄 既有项目（PBKDF2 + session + 每 IP 每小时 10 次失败限速）
+// 认证/会话/限速沿用既有项目模板（PBKDF2 + session + 每 IP 每小时 10 次失败限速）
 // 业务：需求 CRUD + 状态机 + 标签 + 工作项清单 + 截图 + FTS5 去重提示
 // bindings: env.DB(D1) / env.ASSETS(静态)
 const COOKIE = 'storypool_auth';

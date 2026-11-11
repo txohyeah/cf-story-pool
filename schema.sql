@@ -1,5 +1,5 @@
 -- cf-story-pool 需求池 schema（D1 = cf-story-pool-db）
--- 用户/会话/限速照抄 既有项目；业务表见 PRD v0.1
+-- 用户/会话/限速沿用既有项目模板；业务表见 PRD v0.1
 
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY,

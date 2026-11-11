@@ -1,0 +1,13 @@
+{
+  "_说明": "复制本文件为 data/local_config.json 后填写真实值；后者已在 .gitignore 中，绝不入库。",
+  "users": [
+    {"username": "member1", "display": "成员一", "pass_file": "pool_pass_member1"},
+    {"username": "member2", "display": "成员二", "pass_file": "pool_pass_member2"},
+    {"username": "botsvc", "display": "自动化测试", "pass_file": "pool_test_pass"}
+  ],
+  "project_a": "项目一",
+  "project_b": "项目二",
+  "test_pass_file": "pool_test_pass",
+  "doc_user": "member1",
+  "doc_pass_file": "pool_pass_member1"
+}

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""cf-story-pool 线上功能自检（botsvc 测试账号，不碰真实用户）。
+"""cf-story-pool 线上功能自检（专用测试账号，不碰真实用户）。
 覆盖：健康检查/匿名门禁/登录失败/登录/建单/去重提示/状态流转/工作项清单(我的工作项)/
 评论/标签替换/附件上传下载/重复关闭/删除清理。
-结尾把新会话 cookie 写入 .secrets/pool-cookie.txt（pw.py 部署核对用，600）。
+结尾把新会话 cookie 写入本地未入库的 cookie 文件（部署核对用，600）。
 用法：python3 scripts/verify_live.py [--base https://cf-story-pool.pages.dev]
 """
 import os
@@ -30,7 +30,12 @@ if '--base' in sys.argv:
     BASE = sys.argv[sys.argv.index('--base') + 1].rstrip('/')
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/126.0 Safari/537.36')
-PASS_FILE = os.path.join(WORKSPACE, '.secrets', '<本地凭据文件>')
+from _localcfg import get  # noqa: E402
+
+PROJ_A = get('project_a', '项目A')
+PROJ_B = get('project_b', '项目B')
+TEST_USER = get('test_user', 'botsvc')
+PASS_FILE = os.path.join(WORKSPACE, '.secrets', get('test_pass_file', 'pool_test_pass'))
 COOKIE_FILE = os.path.join(WORKSPACE, '.secrets', 'pool-cookie.txt')
 COOKIE_NAME = 'storypool_auth'
 
@@ -119,12 +124,12 @@ def main():
     check('匿名访问 / 302→/login', s == 302 and '/login' in loc, 'loc=%s' % loc)
 
     # 3. 错误密码 401
-    s, d = jreq('POST', '/api/login', {'username': 'botsvc', 'password': 'wrong-pass'})
+    s, d = jreq('POST', '/api/login', {'username': TEST_USER, 'password': 'wrong-pass'})
     check('错误密码 401', s == 401)
 
     # 4. 正确登录，拿 cookie
     s, h, raw = http('POST', '/api/login',
-                     _json.dumps({'username': 'botsvc', 'password': password}).encode(),
+                     _json.dumps({'username': TEST_USER, 'password': password}).encode(),
                      {'Content-Type': 'application/json'})
     setc = h.get('Set-Cookie', '')
     m = re.search(COOKIE_NAME + '=([^;]+)', setc)
@@ -133,16 +138,16 @@ def main():
 
     # 5. me
     s, d = jreq('GET', '/api/me', cookie=cookie)
-    check('me 返回 botsvc', s == 200 and d.get('authed') and d.get('username') == 'botsvc')
+    check('me 返回测试账号', s == 200 and d.get('authed') and d.get('username') == TEST_USER)
 
     # 6. bootstrap 字典
     s, d = jreq('GET', '/api/bootstrap', cookie=cookie)
     projects = {p['name']: p['id'] for p in d.get('projects', [])}
     users = {u['username']: u['id'] for u in d.get('users', [])}
-    check('bootstrap 含 项目一/项目二', '项目一' in projects and '项目二' in projects)
+    check('bootstrap 含两个项目', PROJ_A in projects and PROJ_B in projects)
     check('bootstrap 含预置标签', any(t['name'] == 'AI整理' for t in d.get('tags', [])))
 
-    # 6b. 自愈清场：删掉历史中断运行泄漏的 [verify] 测试单（botsvc 保留地，按 title 前缀精准匹配）
+    # 6b. 自愈清场：删掉历史中断运行泄漏的 [verify] 测试单（测试账号保留地，按 title 前缀精准匹配）
     s, d = jreq('GET', '/api/requirements?q=' + urllib.request.quote('[verify]') + '&page_size=50',
                 cookie=cookie)
     stale = [x for x in d.get('items', []) if x['title'].startswith('[verify]')]
@@ -153,7 +158,7 @@ def main():
 
     # 7. 建单 A
     s, d = jreq('POST', '/api/requirements', {
-        'project_id': projects['项目一'], 'title': '[verify] 自检测试需求 storypool',
+        'project_id': projects[PROJ_A], 'title': '[verify] 自检测试需求 storypool',
         'description': 'verify_live 自动建单', 'type': 'bug', 'urgency': 'urgent',
         'tags': ['verify自检']}, cookie=cookie)
     ok = s == 200 and d.get('ok') and d.get('id')
@@ -176,9 +181,9 @@ def main():
           d.get('ok') and d2['req']['status'] == 'confirmed'
           and any(e['action'] == 'status' for e in d2['events']))
 
-    # 10. 清单：加工作项指派给 botsvc → my-work 出现 → 完成 → 消失
+    # 10. 清单：加工作项指派给测试账号 → my-work 出现 → 完成 → 消失
     s, d = jreq('POST', '/api/requirements/%d/checklist' % aid,
-                {'content': '后端开发', 'assignee_id': users['botsvc']}, cookie=cookie)
+                {'content': '后端开发', 'assignee_id': users[TEST_USER]}, cookie=cookie)
     cid = d.get('id')
     s, d = jreq('GET', '/api/my-work', cookie=cookie)
     in_my = any(c['req_id'] == aid for c in d.get('items', []))
@@ -189,15 +194,15 @@ def main():
 
     # 10b. my-work 同步过滤：project/type/tag/status/q 全链路（自包含：建 D + 给 A 加工作项 → 断言 → 清理）
     s, d = jreq('POST', '/api/requirements/%d/checklist' % aid,
-                {'content': '前端联调', 'assignee_id': users['botsvc']}, cookie=cookie)
+                {'content': '前端联调', 'assignee_id': users[TEST_USER]}, cookie=cookie)
     aid2_cid = d.get('id')
     s, d = jreq('POST', '/api/requirements', {
-        'project_id': projects['项目二'], 'title': '[verify] mywork过滤探针',
+        'project_id': projects[PROJ_B], 'title': '[verify] mywork过滤探针',
         'description': 'verify_live my-work 过滤测试', 'type': 'req',
         'tags': ['verify自检', 'mywork探针标签']}, cookie=cookie)
     did = d.get('id')
     s, d = jreq('POST', '/api/requirements/%d/checklist' % did,
-                {'content': '[verify] mywork探针独特词zzq', 'assignee_id': users['botsvc']}, cookie=cookie)
+                {'content': '[verify] mywork探针独特词zzq', 'assignee_id': users[TEST_USER]}, cookie=cookie)
     did_cid = d.get('id')
     s, d = jreq('GET', '/api/my-work', cookie=cookie)
     mw_ids = {c['req_id'] for c in d.get('items', [])}
@@ -209,8 +214,8 @@ def main():
         ids = {c['req_id'] for c in d.get('items', [])}
         return set(want) <= ids and not (set(notwant) & ids)
 
-    check('mywork过滤: project=项目二 只剩D',
-          mw_has('?project=%d' % projects['项目二'], {did}, {aid}))
+    check('mywork过滤: 项目B 只剩D',
+          mw_has('?project=%d' % projects[PROJ_B], {did}, {aid}))
     check('mywork过滤: type=bug 只剩A', mw_has('?type=bug', {aid}, {did}))
     check('mywork过滤: type=req 只剩D', mw_has('?type=req', {did}, {aid}))
     check('mywork过滤: tag=mywork探针标签 只剩D',
@@ -227,7 +232,7 @@ def main():
     check('mywork过滤: q 命中需求标题(A)',
           mw_has('?q=' + urllib.request.quote('自检测试需求'), {aid}))
     check('mywork过滤: 组合 project+type',
-          mw_has('?project=%d&type=bug' % projects['项目一'], {aid}, {did}))
+          mw_has('?project=%d&type=bug' % projects[PROJ_A], {aid}, {did}))
     # 清理：D 删除（工作项级联删），A 的探针工作项标 done
     s, d = jreq('DELETE', '/api/requirements/%d' % did, cookie=cookie)
     s, d = jreq('PATCH', '/api/checklist/%d' % aid2_cid, {'status': 'done'}, cookie=cookie)
@@ -245,7 +250,7 @@ def main():
     s2, d2 = jreq('GET', '/api/requirements/%d' % aid, cookie=cookie)
     check('CM 评论编辑留痕', s == 200 and d.get('ok') and any(e.get('id') == comment_id and e.get('detail') == 'verify 评论已编辑' for e in d2.get('events', []))
           and any(e.get('action') == 'comment_edit' and e.get('detail') == 'verify 评论已编辑' for e in d2.get('events', [])))
-    # CM 越权编辑跳过：脚本仅有 botsvc 的 cookie，没有第二个账号的现成会话。
+    # CM 越权编辑跳过：脚本仅有测试账号的 cookie，没有第二个账号的现成会话。
     s, d = jreq('DELETE', '/api/requirements/%d/comment/%d' % (aid, comment_id), cookie=cookie)
     s2, d2 = jreq('GET', '/api/requirements/%d' % aid, cookie=cookie)
     check('CM 评论删除留痕', s == 200 and d.get('ok') and not any(e.get('id') == comment_id for e in d2.get('events', []))
@@ -273,7 +278,7 @@ def main():
 
     # 14. 建单 C 带附件 → 详情含附件 → 删除 C → 附件 404
     s, d = jreq('POST', '/api/requirements', {
-        'project_id': projects['项目一'], 'title': '[verify] 附件单',
+        'project_id': projects[PROJ_A], 'title': '[verify] 附件单',
         'tags': ['verify自检'], 'attachments': [{'key': up['key'], 'name': 'v.png', 'size': len(png)}]},
         cookie=cookie)
     cid2 = d.get('id')
@@ -285,7 +290,7 @@ def main():
 
     # 15. 重复关闭：B → A；删除 A 前先删 B（解除引用）
     s, d = jreq('POST', '/api/requirements', {
-        'project_id': projects['项目二'], 'title': '[verify] 重复单测试',
+        'project_id': projects[PROJ_B], 'title': '[verify] 重复单测试',
         'tags': ['verify自检']}, cookie=cookie)
     bid = d.get('id')
     s, d = jreq('PATCH', '/api/requirements/%d' % bid,
@@ -303,9 +308,9 @@ def main():
     # 17. 项目统计接口（首页项目卡片数据源）
     s, d = jreq('GET', '/api/projects', cookie=cookie)
     pj = {p['name']: p for p in d.get('projects', [])}
-    check('项目统计接口含 项目一 且带 total/open',
-          '项目一' in pj and isinstance(pj['项目一'].get('total'), int)
-          and isinstance(pj['项目一'].get('open'), int))
+    check('项目统计接口含项目A 且带 total/open',
+          PROJ_A in pj and isinstance(pj[PROJ_A].get('total'), int)
+          and isinstance(pj[PROJ_A].get('open'), int))
 
     # 18. 项目创建 + 有需求项目禁删 + 空项目可删（闭环不留脏数据）
     s, d = jreq('POST', '/api/projects', {'name': '[verify] 自检项目'}, cookie=cookie)
@@ -578,7 +583,7 @@ def main():
         s, _h, _b = http('GET', path, headers={'Cookie': cookie})
         check(name, s == 200)
 
-    # 19. 需求列表排序（复用 botsvc 会话）
+    # 19. 需求列表排序（复用测试账号会话）
     s, d = jreq('GET', '/api/requirements', cookie=cookie)
     default_items = d.get('items', [])
     check('排序: 默认更新时间倒序及编号次序', s == 200 and len(default_items) >= 2

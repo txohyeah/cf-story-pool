@@ -1,28 +1,28 @@
 # cf-story-pool 需求池 PRD v0.1
 
 > 2026-10-08 初稿，待用户审定后开发。
-> 定位：三人小团队（晓/前端同事/成员C）的需求与缺陷回流池，托管 CF Pages，AI 深度介入。
+> 定位：三人小团队的需求与缺陷回流池，托管 CF Pages，AI 深度介入。
 > 语雀继续放文档（PRD/用户手册），本站只管需求流水。
 
 ## 1. 背景
 
-项目一 v1 上线后现场需求回流，原语雀周会文档模式四个痛点：无结构（无法按模块/状态筛选）、易重复（靠记忆去重）、复现确认难跟踪（状态只在 checkbox 里）、与 AI 断连（语雀无结构化 API）。
+首个业务项目 v1 上线后现场需求回流，原语雀周会文档模式四个痛点：无结构（无法按模块/状态筛选）、易重复（靠记忆去重）、复现确认难跟踪（状态只在 checkbox 里）、与 AI 断连（语雀无结构化 API）。
 
-已排除路线：Jira/开源自部署（重、占服务器、AI 弱）、纯 SaaS（定制天花板低）。选定自研 CF Pages，照抄 既有项目 / 既有项目 / 既有项目 / paper-sim 四站成熟骨架。
+已排除路线：Jira/开源自部署（重、占服务器、AI 弱）、纯 SaaS（定制天花板低）。选定自研 CF Pages，沿用既有项目的静态站 + 门禁模板 / paper-sim 四站成熟骨架。
 
 ## 2. 用户与权限
 
 | 用户 | 分工 |
 |---|---|
-| 晓 | 产品设计 + 后端开发（创建人） |
-| 前端同事 | 前端开发 |
-| 成员C | — |
+| 成员 A | 产品设计 + 后端开发（创建人） |
+| 成员 B | 前端开发 |
+| 成员 C | — |
 
 - 三人全权限，无角色、无状态流转权限约束
 - 加人 = users 表插一行
-- 第 4 个账号 `botsvc`：verify 自检与 agent web 动作专用，不碰真实账号（既有项目 教训）
-- 认证照抄 既有项目：PBKDF2 + 登录限速（每 IP 每小时 10 次失败）+ session cookie
-- 口令落 `.secrets/<本地凭据>*`（600 权限，不落对话）
+- 第 4 个账号：verify 自检与 agent web 动作专用，不碰真实账号（沿用既有项目教训）
+- 认证沿用既有项目模板：PBKDF2 + 登录限速（每 IP 每小时 10 次失败）+ session cookie
+- 口令由管理员发放并在本地保管（不入库、不落对话）
 
 ## 3. 数据模型（DDL 草稿）
 
@@ -114,7 +114,7 @@ submitted(待复现确认) → confirmed(已确认) → scheduled(已排期)
 - 全员可点任意流转，按钮给"建议下一步"但不强制（三人团队，不设权限矩阵）
 - 复现确认 = 在 `submitted` 上点"已确认"，事件流水自动记 actor + 时间
 
-## 5. 页面清单（移动端优先，plain HTML+JS 照抄 既有项目 模式）
+## 5. 页面清单（移动端优先，plain HTML+JS 沿用既有项目模式）
 
 | 页面 | 内容 |
 |---|---|
@@ -143,7 +143,7 @@ GET  /api/dedup-suggest?q=        -- FTS5 top5 疑似重复
 
 ## 7. AI 融入点
 
-- **P0 通道**：agent 直连 D1 建单（channel=agent，自动打 `AI整理` 标签），讨论结论写事件流水；前端同事等现场人员走 web 表单
+- **P0 通道**：agent 直连 D1 建单（channel=agent，自动打 `AI整理` 标签），讨论结论写事件流水；现场人员走 web 表单
 - **P0 去重提示**：提交表单 FTS5 实时疑似重复（零成本、无外部依赖）
 - **P1 LLM-in-worker**（等用户提供 API key 放 CF Secret 再做）：语义去重重排、标签建议、截图 OCR 预填模块/类型/复现步骤草稿
 - **零开发常驻能力**：周汇总、重复聚类分析、按需查询、起草开发任务——agent 直连 D1 天然具备
@@ -159,9 +159,9 @@ GET  /api/dedup-suggest?q=        -- FTS5 top5 疑似重复
 - 仓库 `git@github.com:txohyeah/cf-story-pool.git`（已建）
 - Pages 项目名 `cf-story-pool` → https://cf-story-pool.pages.dev
 - 发布链：worker_src → cp dist → git push → pw.py deploy（照 runbook；_worker.js 必须在 dist 根）
-- 自检 `scripts/verify_live.py`：登录/建单/流转/清单/去重/附件全链路断言，用 botsvc 账号
+- 自检 `scripts/verify_live.py`：登录/建单/流转/清单/去重/附件全链路断言，用专用测试账号
 - 数据备份：backup_d1.py 定期导出
-- 上线顺序：先 D1 建表 + seed（users/projects/tags + botsvc 账号），再部署 worker
+- 上线顺序：先 D1 建表 + seed（users/projects/tags + 测试账号），再部署 worker
 
 ## 10. MVP 边界
 

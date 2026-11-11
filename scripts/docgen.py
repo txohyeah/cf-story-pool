@@ -10,7 +10,7 @@
                                      执行记录/文档清单/统计——agent 拿数据包+模板骨架构建任意个性化文档）
 
 输出 md 文件落 DIR（默认 reports/），供润色/归档/转 docx。
-凭据从 .secrets/<本地凭据文件>_custom 读取，不回显。
+取数账号与凭据从本地未入库配置读（data/local_config.json），不回显。
 """
 import json
 import os
@@ -57,9 +57,11 @@ def checked_json(response, context):
 def login():
     s = requests.Session()
     s.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0'
-    pw = open(os.path.join(WS, '.secrets', '<本地凭据文件>_custom')).read().strip()
+    from _localcfg import get
+    doc_user = get('doc_user', 'member1')
+    pw = open(os.path.join(WS, '.secrets', get('doc_pass_file', 'pool_pass_member1'))).read().strip()
     try:
-        response = retry(lambda: s.post(BASE + '/api/login', json={'username': 'member1', 'password': pw}, timeout=25))
+        response = retry(lambda: s.post(BASE + '/api/login', json={'username': doc_user, 'password': pw}, timeout=25))
     except requests.RequestException:
         raise SystemExit('登录失败：网络错误')
     checked_json(response, '登录')
