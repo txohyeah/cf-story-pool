@@ -1624,6 +1624,173 @@ async function apiBaselineRemoveItem(request,env,u,id,itemId) {
   return json({ok:true});
 }
 
+// ---------- regression report snapshots and run comparison ----------
+function canonicalJson(value) {
+  if (Array.isArray(value)) return '['+value.map(canonicalJson).join(',')+']';
+  if (value!==null && typeof value==='object') return '{'+Object.keys(value).sort().map(k=>JSON.stringify(k)+':'+canonicalJson(value[k])).join(',')+'}';
+  return JSON.stringify(value);
+}
+function reportEffective(result,decision) {
+  if (result==='pass' || (result==='diff' && decision==='accept')) return 'pass';
+  if (result==='fail' || result==='deviation' || result==='diff') return 'fail';
+  return 'empty';
+}
+async function reportRunData(env,pid,id) {
+  const run=await env.DB.prepare(`SELECT r.id,r.round_no,r.release_id,rl.version AS release_version,r.build_ref,r.commit_sha,r.environment,r.config_hash,r.created_at,r.closed_at,r.state,
+    p.name AS project_name,b.id AS baseline_id,b.baseline_code,b.revision AS baseline_revision,b.release_id AS baseline_release_id,b.manifest_hash
+    FROM test_runs r JOIN projects p ON p.id=r.project_id AND p.is_active=1 JOIN releases rl ON rl.id=r.release_id AND rl.project_id=r.project_id
+    JOIN regression_baselines b ON b.id=r.baseline_id AND b.project_id=r.project_id WHERE r.id=? AND r.project_id=?`).bind(id,pid).first();
+  if (!run) return null;
+  const items=(await env.DB.prepare(`SELECT i.tc_id,t.tc_code,t.title,i.layer,i.tc_version,COALESCE(e.result,'') AS result,
+    e.diff_decision,e.diff_reason,e.diff_signed_at,e.executed_at,u.display_name AS executor,e.conclusion,
+    (SELECT COUNT(*) FROM regression_evidence_refs ev WHERE ev.project_id=i.project_id AND ev.execution_id=e.id) AS evidence_count
+    FROM regression_baseline_items i JOIN test_cases t ON t.id=i.tc_id AND t.project_id=i.project_id
+    LEFT JOIN tc_executions e ON e.run_id=? AND e.baseline_item_id=i.id AND e.project_id=i.project_id
+    LEFT JOIN users u ON u.id=e.executed_by WHERE i.project_id=? AND i.baseline_id=? ORDER BY t.tc_code,i.tc_id`)
+    .bind(id,pid,run.baseline_id).all()).results;
+  return {run,items};
+}
+function compareRunData(after,before) {
+  const reasons=[];
+  if (after.run.environment!==before.run.environment) reasons.push('环境不同');
+  if (after.run.config_hash!==before.run.config_hash) reasons.push('配置哈希不同');
+  if (after.run.manifest_hash!==before.run.manifest_hash) reasons.push('基线清单哈希不同');
+  if (reasons.length) return {ok:true,comparable:false,reasons,pairs:[]};
+  const old=new Map(before.items.map(i=>[i.tc_id,i])), current=new Map(after.items.map(i=>[i.tc_id,i]));
+  const ids=[...new Set([...old.keys(),...current.keys()])].sort((a,b)=>a-b);
+  const summary={new_fail:0,old_fail:0,fixed:0,diff_accepted:0,not_comparable:0,total_pairs:ids.length};
+  const pairs=ids.map(id=>{
+    const b=old.get(id), a=current.get(id), source=a||b;
+    const beforeResult=b?{result:b.result,diff_decision:b.diff_decision}:null;
+    const afterResult=a?{result:a.result,diff_decision:a.diff_decision}:null;
+    let category='not_comparable', note;
+    if (!b) note='only_in_after'; else if (!a) note='only_in_before';
+    else {
+      const x=reportEffective(b.result,b.diff_decision), y=reportEffective(a.result,a.diff_decision);
+      if (x==='pass' && y==='fail') category='new_fail';
+      else if (x==='fail' && y==='fail') category='old_fail';
+      else if (x==='fail' && y==='pass') category='fixed';
+      else if (a.result==='diff' && a.diff_decision==='accept') category='diff_accepted';
+    }
+    summary[category]++;
+    return {tc_id:id,tc_code:source.tc_code,title:source.title,before:beforeResult,after:afterResult,category,...(note?{note}:{})};
+  });
+  return {ok:true,comparable:true,reasons:[],pairs,summary};
+}
+async function apiRunCompare(request,env,id) {
+  const url=new URL(request.url), pid=runPositiveId(url.searchParams.get('project_id')), against=runPositiveId(url.searchParams.get('against'));
+  if (!pid || !against) return json({error:'project_id 和 against 必须为正整数'},400);
+  if (!(await projectVisible(env,pid))) return json({error:'项目不存在或不可见'},404);
+  const [after,before]=await Promise.all([reportRunData(env,pid,id),reportRunData(env,pid,against)]);
+  if (!after || !before) return json({error:'轮次不存在或项目不匹配'},404);
+  return json(compareRunData(after,before));
+}
+async function makeReportSnapshot(env,pid,runId,comparisonId,template) {
+  const data=await reportRunData(env,pid,runId);
+  if (!data) return {error:json({error:'轮次不存在或项目不匹配'},404)};
+  if (data.run.state!=='closed') return {error:json({error:'轮次未关闭，不能生成报告'},409)};
+  let comparison=null;
+  if (comparisonId!==null) {
+    const other=await reportRunData(env,pid,comparisonId);
+    if (!other) return {error:json({error:'对比轮次不存在或项目不匹配'},404)};
+    comparison=compareRunData(data,other);
+    if (!comparison.comparable) return {error:json({error:'轮次不可比',reasons:comparison.reasons},400)};
+  }
+  const counts={total:data.items.length,pass:0,fail:0,deviation:0,diff_accepted:0,diff_rejected:0,diff_unsigned:0,empty:0};
+  const items=data.items.map(i=>{
+    const key=i.result==='diff' ? (i.diff_decision==='accept'?'diff_accepted':i.diff_decision==='reject'?'diff_rejected':'diff_unsigned') : (i.result||'empty');
+    counts[key]++;
+    return {...i,effective:reportEffective(i.result,i.diff_decision)};
+  });
+  const pass=counts.pass+counts.diff_accepted, fail=counts.fail+counts.deviation+counts.diff_rejected+counts.diff_unsigned, executed=pass+fail;
+  const r=data.run;
+  const snapshot={generated_at:nowIso(),template_version:template,project:{id:pid,name:r.project_name},
+    run:{id:r.id,round_no:r.round_no,release_id:r.release_id,release_version:r.release_version,build_ref:r.build_ref,commit_sha:r.commit_sha,environment:r.environment,config_hash:r.config_hash,created_at:r.created_at,closed_at:r.closed_at},
+    baseline:{id:r.baseline_id,baseline_code:r.baseline_code,revision:r.baseline_revision,release_id:r.baseline_release_id,manifest_hash:r.manifest_hash,item_count:items.length},
+    counts,effective:{executed,pass,fail,pass_rate:executed?Number((pass/executed).toFixed(4)):0},items,comparison};
+  const raw=canonicalJson(snapshot); return {raw,hash:await stepsHash(raw)};
+}
+async function scopedReport(request,env,id,body) {
+  const given=body ? body.project_id : new URL(request.url).searchParams.get('project_id'), pid=runPositiveId(given);
+  if (!pid || !(await projectVisible(env,pid))) return null;
+  return await env.DB.prepare('SELECT * FROM regression_reports WHERE id=? AND project_id=?').bind(id,pid).first();
+}
+async function apiReportCreate(request,env,u) {
+  const body=await readApiBody(request),pid=runPositiveId(body.project_id),run=runPositiveId(body.run_id);
+  const comparison=body.comparison_run_id==null ? null : runPositiveId(body.comparison_run_id);
+  if (!pid || !run || (body.comparison_run_id!=null && !comparison)) return json({error:'项目和轮次编号必须为正整数'},400);
+  if (body.template_version!==undefined && (typeof body.template_version!=='string' || body.template_version.length>100)) return json({error:'template_version 不合法'},400);
+  if (!(await projectVisible(env,pid))) return json({error:'项目不存在或不可见'},404);
+  const snap=await makeReportSnapshot(env,pid,run,comparison,body.template_version||''); if (snap.error) return snap.error;
+  const counter=await env.DB.prepare('INSERT INTO counters(name,value) VALUES(?,1) ON CONFLICT(name) DO UPDATE SET value=value+1 RETURNING value').bind('report_code:'+pid).first();
+  if (!counter || !Number.isSafeInteger(counter.value) || counter.value<1) throw new ApiError('报告编号计数器异常',500);
+  const code='RPT-'+String(counter.value).padStart(3,'0');
+  const insert=env.DB.prepare(`INSERT INTO regression_reports(project_id,run_id,comparison_run_id,report_code,revision,state,snapshot_json,snapshot_hash,template_version,created_by)
+    SELECT ?,?,?,?,1,'draft',?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM regression_reports WHERE project_id=? AND run_id=? AND state IN ('draft','approved'))
+    AND EXISTS (SELECT 1 FROM test_runs WHERE id=? AND project_id=? AND state='closed')`).bind(pid,run,comparison,code,snap.raw,snap.hash,body.template_version||'',u.userId,pid,run,run,pid);
+  const result=await env.DB.batch([insert,auditEvent(env,pid,'report',null,'create',u.userId,null,snap.hash,{run_id:run},true)]);
+  if (!result[0].meta.changes) return json({error:'该轮次已有未冻结报告，请直接修改或先冻结'},409);
+  return json({ok:true,id:result[0].meta.last_row_id,report_code:code,revision:1,snapshot_hash:snap.hash});
+}
+function reportRow(row) {
+  const snapshot=JSON.parse(row.snapshot_json);
+  return {id:row.id,report_code:row.report_code,revision:row.revision,state:row.state,run_id:row.run_id,run_round_no:row.run_round_no,release_version:row.release_version,
+    comparison_run_id:row.comparison_run_id,counts:snapshot.counts,pass_rate:snapshot.effective.pass_rate,created_at:row.created_at,approved_at:row.approved_at,frozen_at:row.frozen_at};
+}
+const REPORT_SELECT=`SELECT r.*,tr.round_no AS run_round_no,rl.version AS release_version,approver.display_name AS approved_by_name,freezer.display_name AS frozen_by_name
+  FROM regression_reports r JOIN test_runs tr ON tr.id=r.run_id AND tr.project_id=r.project_id JOIN releases rl ON rl.id=tr.release_id AND rl.project_id=tr.project_id
+  LEFT JOIN users approver ON approver.id=r.approved_by LEFT JOIN users freezer ON freezer.id=r.frozen_by`;
+async function apiReportList(request,env) {
+  const url=new URL(request.url),pid=runPositiveId(url.searchParams.get('project_id')),arg=url.searchParams.get('run_id'),rid=arg===null?null:runPositiveId(arg);
+  if (!pid || (arg!==null && !rid)) return json({error:'项目或轮次编号不合法'},400);
+  if (!(await projectVisible(env,pid))) return json({error:'项目不存在或不可见'},404);
+  if (rid && !(await env.DB.prepare('SELECT id FROM test_runs WHERE id=? AND project_id=?').bind(rid,pid).first())) return json({error:'轮次不存在或项目不匹配'},404);
+  const rows=(await env.DB.prepare(REPORT_SELECT+` WHERE r.project_id=? ${rid?'AND r.run_id=?':''} ORDER BY r.id DESC`).bind(...(rid?[pid,rid]:[pid])).all()).results;
+  return json({ok:true,items:rows.map(reportRow)});
+}
+async function apiReportDetail(request,env,id,exporting=false) {
+  const report=await scopedReport(request,env,id); if (!report) return json({error:'报告不存在或项目不匹配'},404);
+  if (exporting) {
+    if (new URL(request.url).searchParams.get('format')!=='json') return json({error:'仅支持 format=json'},400);
+    return new Response(report.snapshot_json,{headers:{'Content-Type':'application/json; charset=utf-8','Content-Disposition':`attachment; filename="${report.report_code}-r${report.revision}.json"`,'Cache-Control':'no-store'}});
+  }
+  const row=await env.DB.prepare(REPORT_SELECT+' WHERE r.id=? AND r.project_id=?').bind(id,report.project_id).first();
+  return json({ok:true,report:{...reportRow(row),snapshot_json:row.snapshot_json,snapshot_hash:row.snapshot_hash,approved_by_name:row.approved_by_name,frozen_by_name:row.frozen_by_name}});
+}
+async function apiReportTransition(request,env,u,id,action) {
+  const body=await readApiBody(request),report=await scopedReport(request,env,id,body);
+  if (!report) return json({error:'报告不存在或项目不匹配'},404);
+  if (action==='approve' && report.state==='approved') return json({ok:true,state:'approved'});
+  if (report.state==='frozen') return json({error:'报告已冻结'},409);
+  if (action==='freeze' && report.state!=='approved') return json({error:'请先批准'},409);
+  const from=action==='approve'?'draft':'approved',to=action==='approve'?'approved':'frozen',now=nowIso();
+  const sql=action==='approve' ? "UPDATE regression_reports SET state='approved',approved_by=?,approved_at=?,updated_at=? WHERE id=? AND project_id=? AND state='draft'" : "UPDATE regression_reports SET state='frozen',frozen_by=?,frozen_at=?,updated_at=? WHERE id=? AND project_id=? AND state='approved'";
+  const result=await env.DB.batch([env.DB.prepare(sql).bind(u.userId,now,now,id,report.project_id),auditEvent(env,report.project_id,'report',id,action,u.userId,null,null,{from,to},true)]);
+  if (!result[0].meta.changes) {
+    const current=await env.DB.prepare('SELECT state FROM regression_reports WHERE id=? AND project_id=?').bind(id,report.project_id).first();
+    if (action==='approve' && current && current.state==='approved') return json({ok:true,state:'approved'});
+    return json({error:'报告状态已变化，请重试'},409);
+  }
+  return json({ok:true,state:to});
+}
+async function apiReportRevision(request,env,u,id) {
+  const body=await readApiBody(request),report=await scopedReport(request,env,id,body);
+  if (!report) return json({error:'报告不存在或项目不匹配'},404);
+  if (report.state!=='frozen') return json({error:'只有已冻结报告可以更正'},409);
+  if (body.note!==undefined && (typeof body.note!=='string' || body.note.length>500)) return json({error:'note 不合法'},400);
+  const snap=await makeReportSnapshot(env,report.project_id,report.run_id,report.comparison_run_id,report.template_version); if (snap.error) return snap.error;
+  const next=report.revision+1;
+  const insert=env.DB.prepare(`INSERT INTO regression_reports(project_id,run_id,comparison_run_id,report_code,revision,state,snapshot_json,snapshot_hash,template_version,created_by)
+    SELECT ?,?,?,?,?,'draft',?,?,?,? WHERE EXISTS (SELECT 1 FROM regression_reports WHERE id=? AND project_id=? AND state='frozen')
+    AND NOT EXISTS (SELECT 1 FROM regression_reports WHERE project_id=? AND run_id=? AND state IN ('draft','approved'))`)
+    .bind(report.project_id,report.run_id,report.comparison_run_id,report.report_code,next,snap.raw,snap.hash,report.template_version,u.userId,id,report.project_id,report.project_id,report.run_id);
+  let result;
+  try { result=await env.DB.batch([insert,auditEvent(env,report.project_id,'report',null,'revision',u.userId,null,snap.hash,{prev_id:id,prev_revision:report.revision,note:body.note||''},true)]); }
+  catch(e) { if (/UNIQUE constraint/i.test(String(e.message||''))) return json({error:'更正版本已存在或并发冲突'},409); throw e; }
+  if (!result[0].meta.changes) return json({error:'已有未冻结报告或状态变化'},409);
+  return json({ok:true,id:result[0].meta.last_row_id,revision:next});
+}
+
 // ---------- regression runs ----------
 function runPositiveId(value) {
   if (!((typeof value === 'number' && Number.isSafeInteger(value)) || (typeof value === 'string' && /^[1-9]\d*$/.test(value)))) return null;
@@ -2175,6 +2342,12 @@ async function handleRequest(request, env) {
       }
       const rlmx = p.match(/^\/api\/releases\/(\d+)\/executions$/);
       if (rlmx && method === 'GET') return apiTcExecList(request, env, parseInt(rlmx[1], 10));
+      const runCompare=p.match(/^\/api\/runs\/(\d+)\/compare$/); if (runCompare && method==='GET') return apiRunCompare(request,env,Number(runCompare[1]));
+      if (p==='/api/reports' && method==='GET') return apiReportList(request,env);
+      if (p==='/api/reports' && method==='POST') return apiReportCreate(request,env,u);
+      const reportDetail=p.match(/^\/api\/reports\/(\d+)$/); if (reportDetail && method==='GET') return apiReportDetail(request,env,Number(reportDetail[1]));
+      const reportAction=p.match(/^\/api\/reports\/(\d+)\/(approve|freeze|revision)$/); if (reportAction && method==='POST') return reportAction[2]==='revision' ? apiReportRevision(request,env,u,Number(reportAction[1])) : apiReportTransition(request,env,u,Number(reportAction[1]),reportAction[2]);
+      const reportExport=p.match(/^\/api\/reports\/(\d+)\/export$/); if (reportExport && method==='GET') return apiReportDetail(request,env,Number(reportExport[1]),true);
       if (p === '/api/runs' && method === 'GET') return apiRunList(request, env);
       if (p === '/api/runs/suggest-baseline' && method === 'GET') return apiRunSuggest(request, env);
       if (p === '/api/runs' && method === 'POST') return apiRunCreate(request, env, u);
