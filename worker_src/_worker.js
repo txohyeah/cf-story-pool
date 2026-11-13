@@ -1624,6 +1624,150 @@ async function apiBaselineRemoveItem(request,env,u,id,itemId) {
   return json({ok:true});
 }
 
+// ---------- regression runs ----------
+function runPositiveId(value) {
+  if (!((typeof value === 'number' && Number.isSafeInteger(value)) || (typeof value === 'string' && /^[1-9]\d*$/.test(value)))) return null;
+  const n=Number(value); return Number.isSafeInteger(n) && n>0 ? n : null;
+}
+async function scopedRun(request,env,id,body) {
+  const run=await env.DB.prepare('SELECT * FROM test_runs WHERE id=?').bind(id).first();
+  if (!run || !(await projectVisible(env,run.project_id))) return null;
+  const given=body && body.project_id!==undefined ? body.project_id : new URL(request.url).searchParams.get('project_id');
+  return given!==null && given!==undefined && runPositiveId(given)!==run.project_id ? null : run;
+}
+const RUN_STATS_SQL = `COUNT(i.id) AS total,
+  COALESCE(SUM(CASE WHEN i.id IS NOT NULL AND e.result='pass' THEN 1 ELSE 0 END),0) AS pass,
+  COALESCE(SUM(CASE WHEN i.id IS NOT NULL AND e.result='fail' THEN 1 ELSE 0 END),0) AS fail,
+  COALESCE(SUM(CASE WHEN i.id IS NOT NULL AND e.result='deviation' THEN 1 ELSE 0 END),0) AS deviation,
+  COALESCE(SUM(CASE WHEN i.id IS NOT NULL AND e.result='diff' THEN 1 ELSE 0 END),0) AS diff,
+  COALESCE(SUM(CASE WHEN i.id IS NOT NULL AND COALESCE(e.result,'')='' THEN 1 ELSE 0 END),0) AS empty`;
+function runStat(row) {
+  return {total:row.total,pass:row.pass,fail:row.fail,deviation:row.deviation,diff:row.diff,empty:row.empty};
+}
+async function apiRunList(request,env) {
+  const url=new URL(request.url), pid=runPositiveId(url.searchParams.get('project_id'));
+  if (!pid) return json({error:'缺少合法 project_id'},400);
+  if (!(await projectVisible(env,pid))) return json({error:'项目不存在或不可见'},404);
+  const relArg=url.searchParams.get('release_id'), rid=relArg===null ? null : runPositiveId(relArg);
+  if (relArg!==null && !rid) return json({error:'release_id 必须为正整数'},400);
+  if (rid && !(await env.DB.prepare('SELECT id FROM releases WHERE id=? AND project_id=?').bind(rid,pid).first())) return json({error:'版本不存在或项目不匹配'},404);
+  const rows=(await env.DB.prepare(`SELECT r.id,r.release_id,rl.version AS release_version,r.baseline_id,b.baseline_code,b.revision,
+    r.round_no,r.build_ref,r.commit_sha,r.environment,r.state,r.created_at,r.closed_at,${RUN_STATS_SQL}
+    FROM test_runs r JOIN releases rl ON rl.id=r.release_id AND rl.project_id=r.project_id
+    JOIN regression_baselines b ON b.id=r.baseline_id AND b.project_id=r.project_id
+    LEFT JOIN regression_baseline_items i ON i.project_id=r.project_id AND i.baseline_id=r.baseline_id
+    LEFT JOIN tc_executions e ON e.run_id=r.id AND e.baseline_item_id=i.id
+    WHERE r.project_id=? ${rid ? 'AND r.release_id=?' : ''}
+    GROUP BY r.id ORDER BY r.release_id DESC,r.round_no DESC`).bind(...(rid?[pid,rid]:[pid])).all()).results;
+  const items=rows.map(row=>{const {total,pass,fail,deviation,diff,empty,...run}=row;return {...run,stat:{total,pass,fail,deviation,diff,empty}};});
+  return json({ok:true,items});
+}
+async function apiRunSuggest(request,env) {
+  const url=new URL(request.url), pid=runPositiveId(url.searchParams.get('project_id')), rid=runPositiveId(url.searchParams.get('release_id'));
+  if (!pid || !rid) return json({error:'缺少合法 project_id 或 release_id'},400);
+  if (!(await projectVisible(env,pid))) return json({error:'项目不存在或不可见'},404);
+  if (!(await env.DB.prepare('SELECT id FROM releases WHERE id=? AND project_id=?').bind(rid,pid).first())) return json({error:'版本不存在或项目不匹配'},404);
+  const candidates=(await env.DB.prepare(`SELECT id,baseline_code,revision,release_id,frozen_at FROM regression_baselines
+    WHERE project_id=? AND state='frozen' ORDER BY frozen_at DESC,id DESC`).bind(pid).all()).results;
+  const rank=(a,b)=>Number(b.revision)-Number(a.revision) || String(b.frozen_at || '').localeCompare(String(a.frozen_at || '')) || b.id-a.id;
+  const specific=candidates.filter(b=>b.release_id===rid).sort(rank), common=candidates.filter(b=>b.release_id==null).sort(rank);
+  const best=specific[0] || common[0];
+  const baseline=best ? {id:best.id,baseline_code:best.baseline_code,revision:best.revision,release_id:best.release_id,scope:specific.length?'release':'common'} : null;
+  return json({ok:true,baseline,candidates});
+}
+async function apiRunCreate(request,env,u) {
+  const body=await readApiBody(request), pid=runPositiveId(body.project_id), rid=runPositiveId(body.release_id), bid=runPositiveId(body.baseline_id);
+  if (!pid || !rid || !bid) return json({error:'project_id、release_id、baseline_id 必须为正整数'},400);
+  if (!(await projectVisible(env,pid))) return json({error:'项目不存在或不可见'},404);
+  if (!(await env.DB.prepare('SELECT id FROM releases WHERE id=? AND project_id=?').bind(rid,pid).first())) return json({error:'版本不存在或项目不匹配'},404);
+  const baseline=await env.DB.prepare('SELECT id,release_id,state FROM regression_baselines WHERE id=? AND project_id=?').bind(bid,pid).first();
+  if (!baseline) return json({error:'基线不存在或项目不匹配'},404);
+  if (baseline.state!=='frozen') return json({error:'基线尚未冻结，不能创建轮次'},409);
+  if (baseline.release_id!==null && baseline.release_id!==rid) return json({error:'基线与该版本不匹配'},409);
+  for (const key of ['build_ref','commit_sha','environment','config_hash']) if (body[key]!==undefined && typeof body[key]!=='string') return json({error:key+' 必须为字符串'},400);
+  const now=nowIso();
+  const insert=env.DB.prepare(`INSERT INTO test_runs(project_id,release_id,baseline_id,round_no,build_ref,commit_sha,environment,config_hash,state,created_by,created_at,updated_at)
+    SELECT ?,?,?,(SELECT COALESCE(MAX(round_no),0)+1 FROM test_runs WHERE project_id=? AND release_id=?),?,?,?,?, 'planned',?,?,?
+    WHERE EXISTS (SELECT 1 FROM regression_baselines WHERE id=? AND project_id=? AND state='frozen' AND (release_id IS NULL OR release_id=?))
+      AND EXISTS (SELECT 1 FROM releases WHERE id=? AND project_id=?)`)
+    .bind(pid,rid,bid,pid,rid,String(body.build_ref||'').slice(0,200),String(body.commit_sha||'').slice(0,200),
+      String(body.environment||'').slice(0,500),String(body.config_hash||'').slice(0,200),u.userId,now,now,bid,pid,rid,rid,pid);
+  let result;
+  try { result=await env.DB.batch([insert,auditEvent(env,pid,'run',null,'create',u.userId,null,null,{release_id:rid,baseline_id:bid},true)]); }
+  catch(e) { if (/UNIQUE constraint failed.*test_runs/i.test(String(e.message||''))) return json({error:'并发冲突，请重试'},409); throw e; }
+  if (!result[0].meta.changes) return json({error:'基线或版本状态已变化，请重试'},409);
+  const id=result[0].meta.last_row_id, row=await env.DB.prepare('SELECT round_no FROM test_runs WHERE id=? AND project_id=?').bind(id,pid).first();
+  return json({ok:true,id,round_no:row.round_no});
+}
+async function getRunStat(env,run) {
+  return await env.DB.prepare(`SELECT ${RUN_STATS_SQL} FROM test_runs r
+    LEFT JOIN regression_baseline_items i ON i.project_id=r.project_id AND i.baseline_id=r.baseline_id
+    LEFT JOIN tc_executions e ON e.run_id=r.id AND e.baseline_item_id=i.id WHERE r.id=? AND r.project_id=? GROUP BY r.id`).bind(run.id,run.project_id).first();
+}
+async function apiRunDetail(request,env,id) {
+  const r=await scopedRun(request,env,id);
+  if (!r) return json({error:'轮次不存在或项目不匹配'},404);
+  const info=await env.DB.prepare(`SELECT r.id,r.project_id,r.release_id,rl.version AS release_version,r.baseline_id,b.baseline_code,b.revision,
+    r.round_no,r.build_ref,r.commit_sha,r.environment,r.config_hash,r.state,r.created_at,r.closed_at,
+    b.release_id AS baseline_release_id,b.frozen_at,b.manifest_hash
+    FROM test_runs r JOIN releases rl ON rl.id=r.release_id AND rl.project_id=r.project_id
+    JOIN regression_baselines b ON b.id=r.baseline_id AND b.project_id=r.project_id WHERE r.id=? AND r.project_id=?`).bind(id,r.project_id).first();
+  const items=(await env.DB.prepare(`SELECT i.id AS baseline_item_id,i.tc_id,t.tc_code,t.title,i.layer,i.tc_version,
+    COALESCE(e.result,'') AS result,e.conclusion,e.dev_ref,e.ev_ref,e.executed_at,u.display_name AS executor,
+    e.diff_reason,e.diff_decision,e.diff_signed_at FROM regression_baseline_items i
+    JOIN test_cases t ON t.id=i.tc_id AND t.project_id=i.project_id
+    LEFT JOIN tc_executions e ON e.run_id=? AND e.baseline_item_id=i.id
+    LEFT JOIN users u ON u.id=e.executed_by WHERE i.project_id=? AND i.baseline_id=? ORDER BY t.tc_code`).bind(id,r.project_id,r.baseline_id).all()).results;
+  const stat=runStat(await getRunStat(env,r));
+  const {baseline_release_id,frozen_at,manifest_hash,...run}=info;
+  run.baseline={id:r.baseline_id,baseline_code:info.baseline_code,revision:info.revision,release_id:baseline_release_id,frozen_at,manifest_hash,item_count:items.length};
+  return json({ok:true,run,stat,items});
+}
+async function apiRunStart(request,env,u,id) {
+  const body=await readApiBody(request), r=await scopedRun(request,env,id,body);
+  if (!r) return json({error:'轮次不存在或项目不匹配'},404);
+  if (r.state==='closed') return json({error:'轮次已关闭'},409);
+  if (r.state==='running') return json({ok:true,state:'running'});
+  const results=await env.DB.batch([
+    env.DB.prepare("UPDATE test_runs SET state='running',updated_at=? WHERE id=? AND project_id=? AND state='planned'").bind(nowIso(),id,r.project_id),
+    auditEvent(env,r.project_id,'run',id,'start',u.userId,null,null,{},true)]);
+  if (!results[0].meta.changes) {
+    const current=await env.DB.prepare('SELECT state FROM test_runs WHERE id=? AND project_id=?').bind(id,r.project_id).first();
+    return current && current.state==='running' ? json({ok:true,state:'running'}) : json({error:'轮次已关闭或状态变化'},409);
+  }
+  return json({ok:true,state:'running'});
+}
+async function runPending(env,r) {
+  const results=(await env.DB.prepare(`SELECT t.tc_code FROM regression_baseline_items i JOIN test_cases t ON t.id=i.tc_id AND t.project_id=i.project_id
+    LEFT JOIN tc_executions e ON e.run_id=? AND e.baseline_item_id=i.id
+    WHERE i.project_id=? AND i.baseline_id=? AND COALESCE(e.result,'')='' ORDER BY t.tc_code`).bind(r.id,r.project_id,r.baseline_id).all()).results;
+  return {pending:results.length,pending_codes:results.slice(0,5).map(x=>x.tc_code)};
+}
+async function apiRunClose(request,env,u,id) {
+  const body=await readApiBody(request), r=await scopedRun(request,env,id,body);
+  if (!r) return json({error:'轮次不存在或项目不匹配'},404);
+  if (body.confirm_partial!==undefined && typeof body.confirm_partial!=='boolean') return json({error:'confirm_partial 必须为布尔值'},400);
+  if (r.state==='closed') return json({error:'轮次已关闭'},409);
+  const pending=await runPending(env,r), partial=body.confirm_partial===true;
+  if (pending.pending && !partial) return json({error:`还有 ${pending.pending} 条未执行`,...pending},409);
+  const now=nowIso();
+  const results=await env.DB.batch([
+    env.DB.prepare(`UPDATE test_runs SET state='closed',closed_by=?,closed_at=?,updated_at=?
+      WHERE id=? AND project_id=? AND state IN ('planned','running') AND
+      (SELECT COUNT(*) FROM regression_baseline_items i LEFT JOIN tc_executions e ON e.run_id=? AND e.baseline_item_id=i.id
+       WHERE i.project_id=? AND i.baseline_id=? AND COALESCE(e.result,'')='')=?`)
+      .bind(u.userId,now,now,id,r.project_id,id,r.project_id,r.baseline_id,pending.pending),
+    auditEvent(env,r.project_id,'run',id,'close',u.userId,null,null,{partial,pending:pending.pending},true)]);
+  if (!results[0].meta.changes) {
+    const current=await env.DB.prepare('SELECT state FROM test_runs WHERE id=? AND project_id=?').bind(id,r.project_id).first();
+    if (!current || current.state==='closed') return json({error:'轮次已关闭'},409);
+    const nowPending=await runPending(env,r);
+    if (nowPending.pending && !partial) return json({error:`还有 ${nowPending.pending} 条未执行`,...nowPending},409);
+    return json({error:'执行结果已变化，请重试'},409);
+  }
+  return json({ok:true,stat:runStat(await getRunStat(env,r))});
+}
+
 // ---------- R5+R6 用例库 test_cases + 执行记录 tc_executions ----------
 const TC_RISKS = ['high', 'middle', 'low', 'external'];
 const TC_TYPES = ['positive', 'negative', 'boundary'];
@@ -1911,6 +2055,12 @@ async function handleRequest(request, env) {
       }
       const rlmx = p.match(/^\/api\/releases\/(\d+)\/executions$/);
       if (rlmx && method === 'GET') return apiTcExecList(request, env, parseInt(rlmx[1], 10));
+      if (p === '/api/runs' && method === 'GET') return apiRunList(request, env);
+      if (p === '/api/runs/suggest-baseline' && method === 'GET') return apiRunSuggest(request, env);
+      if (p === '/api/runs' && method === 'POST') return apiRunCreate(request, env, u);
+      const runDetail = p.match(/^\/api\/runs\/(\d+)$/); if (runDetail && method === 'GET') return apiRunDetail(request, env, Number(runDetail[1]));
+      const runStart = p.match(/^\/api\/runs\/(\d+)\/start$/); if (runStart && method === 'POST') return apiRunStart(request, env, u, Number(runStart[1]));
+      const runClose = p.match(/^\/api\/runs\/(\d+)\/close$/); if (runClose && method === 'POST') return apiRunClose(request, env, u, Number(runClose[1]));
       if (p === '/api/baselines' && method === 'GET') return apiBaselineList(request, env);
       if (p === '/api/baselines' && method === 'POST') return apiBaselineCreate(request, env, u);
       const bl = p.match(/^\/api\/baselines\/(\d+)$/);
