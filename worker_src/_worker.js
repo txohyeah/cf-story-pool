@@ -1705,22 +1705,35 @@ async function getRunStat(env,run) {
     LEFT JOIN tc_executions e ON e.run_id=r.id AND e.baseline_item_id=i.id WHERE r.id=? AND r.project_id=? GROUP BY r.id`).bind(run.id,run.project_id).first();
 }
 async function apiRunDetail(request,env,id) {
-  const r=await scopedRun(request,env,id);
-  if (!r) return json({error:'轮次不存在或项目不匹配'},404);
+  const given=new URL(request.url).searchParams.get('project_id');
+  const requested=given===null ? null : runPositiveId(given);
+  if (given!==null && !requested) return json({error:'轮次不存在或项目不匹配'},404);
   const info=await env.DB.prepare(`SELECT r.id,r.project_id,r.release_id,rl.version AS release_version,r.baseline_id,b.baseline_code,b.revision,
     r.round_no,r.build_ref,r.commit_sha,r.environment,r.config_hash,r.state,r.created_at,r.closed_at,
     b.release_id AS baseline_release_id,b.frozen_at,b.manifest_hash
-    FROM test_runs r JOIN releases rl ON rl.id=r.release_id AND rl.project_id=r.project_id
-    JOIN regression_baselines b ON b.id=r.baseline_id AND b.project_id=r.project_id WHERE r.id=? AND r.project_id=?`).bind(id,r.project_id).first();
-  const items=(await env.DB.prepare(`SELECT i.id AS baseline_item_id,i.tc_id,t.tc_code,t.title,i.layer,i.tc_version,
-    COALESCE(e.result,'') AS result,e.conclusion,e.dev_ref,e.ev_ref,e.executed_at,u.display_name AS executor,
-    e.diff_reason,e.diff_decision,e.diff_signed_at FROM regression_baseline_items i
-    JOIN test_cases t ON t.id=i.tc_id AND t.project_id=i.project_id
+    FROM test_runs r JOIN projects p ON p.id=r.project_id AND p.is_active=1
+    JOIN releases rl ON rl.id=r.release_id AND rl.project_id=r.project_id
+    JOIN regression_baselines b ON b.id=r.baseline_id AND b.project_id=r.project_id
+    WHERE r.id=? AND (? IS NULL OR r.project_id=?)`).bind(id,requested,requested).first();
+  if (!info) return json({error:'轮次不存在或项目不匹配'},404);
+  const rows=(await env.DB.prepare(`SELECT i.id AS baseline_item_id,i.tc_id,t.tc_code,t.title,i.layer,i.tc_version,
+    e.id AS execution_id,COALESCE(e.result,'') AS result,e.conclusion,e.dev_ref,e.ev_ref,e.executed_at,u.display_name AS executor,
+    e.diff_reason,e.diff_decision,e.diff_signed_at,
+    json_group_array(json_object('id',ev.id,'artifact_key',ev.artifact_key,'kind',ev.kind,'locator',ev.locator,
+      'sha256',ev.sha256,'byte_size',ev.byte_size,'summary',ev.summary,'created_by_name',creator.display_name,'created_at',ev.created_at))
+      FILTER (WHERE ev.id IS NOT NULL) AS evidence_json
+    FROM regression_baseline_items i JOIN test_cases t ON t.id=i.tc_id AND t.project_id=i.project_id
     LEFT JOIN tc_executions e ON e.run_id=? AND e.baseline_item_id=i.id
-    LEFT JOIN users u ON u.id=e.executed_by WHERE i.project_id=? AND i.baseline_id=? ORDER BY t.tc_code`).bind(id,r.project_id,r.baseline_id).all()).results;
-  const stat=runStat(await getRunStat(env,r));
+    LEFT JOIN users u ON u.id=e.executed_by
+    LEFT JOIN regression_evidence_refs ev ON ev.project_id=i.project_id AND ev.execution_id=e.id
+    LEFT JOIN users creator ON creator.id=ev.created_by
+    WHERE i.project_id=? AND i.baseline_id=? GROUP BY i.id ORDER BY t.tc_code`).bind(id,info.project_id,info.baseline_id).all()).results;
+  const stat={total:rows.length,pass:0,fail:0,deviation:0,diff:0,empty:0};
+  const items=rows.map(row=>{ const {evidence_json,...item}=row; const key=item.result || 'empty';
+    if (Object.prototype.hasOwnProperty.call(stat,key)) stat[key]++;
+    return {...item,evidence:JSON.parse(evidence_json || '[]')}; });
   const {baseline_release_id,frozen_at,manifest_hash,...run}=info;
-  run.baseline={id:r.baseline_id,baseline_code:info.baseline_code,revision:info.revision,release_id:baseline_release_id,frozen_at,manifest_hash,item_count:items.length};
+  run.baseline={id:info.baseline_id,baseline_code:info.baseline_code,revision:info.revision,release_id:baseline_release_id,frozen_at,manifest_hash,item_count:items.length};
   return json({ok:true,run,stat,items});
 }
 async function apiRunStart(request,env,u,id) {
@@ -1747,25 +1760,132 @@ async function apiRunClose(request,env,u,id) {
   const body=await readApiBody(request), r=await scopedRun(request,env,id,body);
   if (!r) return json({error:'轮次不存在或项目不匹配'},404);
   if (body.confirm_partial!==undefined && typeof body.confirm_partial!=='boolean') return json({error:'confirm_partial 必须为布尔值'},400);
+  if (body.confirm_unsigned_diff!==undefined && typeof body.confirm_unsigned_diff!=='boolean') return json({error:'confirm_unsigned_diff 必须为布尔值'},400);
   if (r.state==='closed') return json({error:'轮次已关闭'},409);
   const pending=await runPending(env,r), partial=body.confirm_partial===true;
   if (pending.pending && !partial) return json({error:`还有 ${pending.pending} 条未执行`,...pending},409);
+  const unsigned=await runUnsignedDiff(env,r), allowUnsigned=body.confirm_unsigned_diff===true;
+  if (unsigned.unsigned_diff && !allowUnsigned) return json({error:`还有 ${unsigned.unsigned_diff} 条 DIFF 未签字`,...unsigned},409);
   const now=nowIso();
   const results=await env.DB.batch([
     env.DB.prepare(`UPDATE test_runs SET state='closed',closed_by=?,closed_at=?,updated_at=?
       WHERE id=? AND project_id=? AND state IN ('planned','running') AND
       (SELECT COUNT(*) FROM regression_baseline_items i LEFT JOIN tc_executions e ON e.run_id=? AND e.baseline_item_id=i.id
-       WHERE i.project_id=? AND i.baseline_id=? AND COALESCE(e.result,'')='')=?`)
-      .bind(u.userId,now,now,id,r.project_id,id,r.project_id,r.baseline_id,pending.pending),
-    auditEvent(env,r.project_id,'run',id,'close',u.userId,null,null,{partial,pending:pending.pending},true)]);
+       WHERE i.project_id=? AND i.baseline_id=? AND COALESCE(e.result,'')='')=? AND
+      (SELECT COUNT(*) FROM regression_baseline_items i JOIN tc_executions e
+       ON e.run_id=? AND e.baseline_item_id=i.id AND e.project_id=i.project_id
+       WHERE i.project_id=? AND i.baseline_id=? AND e.result='diff' AND e.diff_decision IS NULL)=?`)
+      .bind(u.userId,now,now,id,r.project_id,id,r.project_id,r.baseline_id,pending.pending,id,r.project_id,r.baseline_id,unsigned.unsigned_diff),
+    auditEvent(env,r.project_id,'run',id,'close',u.userId,null,null,{partial,pending:pending.pending,unsigned_diff:unsigned.unsigned_diff},true)]);
   if (!results[0].meta.changes) {
     const current=await env.DB.prepare('SELECT state FROM test_runs WHERE id=? AND project_id=?').bind(id,r.project_id).first();
     if (!current || current.state==='closed') return json({error:'轮次已关闭'},409);
     const nowPending=await runPending(env,r);
     if (nowPending.pending && !partial) return json({error:`还有 ${nowPending.pending} 条未执行`,...nowPending},409);
+    const nowUnsigned=await runUnsignedDiff(env,r);
+    if (nowUnsigned.unsigned_diff && !allowUnsigned) return json({error:`还有 ${nowUnsigned.unsigned_diff} 条 DIFF 未签字`,...nowUnsigned},409);
     return json({error:'执行结果已变化，请重试'},409);
   }
   return json({ok:true,stat:runStat(await getRunStat(env,r))});
+}
+
+// ---------- DIFF decisions and evidence references ----------
+async function scopedRunExecution(request,env,runId,executionId,body) {
+  const r=await scopedRun(request,env,runId,body);
+  if (!r) return {error:json({error:'轮次不存在或项目不匹配'},404)};
+  if (body && runPositiveId(body.project_id)!==r.project_id) return {error:json({error:'项目不匹配'},404)};
+  const e=await env.DB.prepare('SELECT * FROM tc_executions WHERE id=? AND run_id=? AND project_id=?').bind(executionId,runId,r.project_id).first();
+  if (!e) return {error:json({error:'执行记录不存在或项目不匹配'},404)};
+  return {run:r,execution:e};
+}
+async function apiDiffSign(request,env,u,runId,executionId) {
+  const body=await readApiBody(request), ctx=await scopedRunExecution(request,env,runId,executionId,body);
+  if (ctx.error) return ctx.error;
+  const {run:r,execution:e}=ctx;
+  if (r.state==='closed') return json({error:'轮次已关闭，不能签字'},409);
+  if (e.result!=='diff') return json({error:'该条结果不是 DIFF，无需签字'},409);
+  if (!['accept','reject'].includes(body.decision)) return json({error:'decision 必须为 accept 或 reject'},400);
+  if (body.reason!==undefined && (typeof body.reason!=='string' || body.reason.length>500)) return json({error:'reason 必须为不超过 500 字符的字符串'},400);
+  const now=nowIso(), reason=body.reason===undefined ? '' : body.reason;
+  const results=await env.DB.batch([
+    env.DB.prepare(`UPDATE tc_executions SET diff_reason=?,diff_decision=?,diff_signed_by=?,diff_signed_at=?
+      WHERE id=? AND run_id=? AND project_id=? AND result='diff' AND diff_decision IS ? AND diff_signed_by IS ?
+        AND diff_signed_at IS ? AND diff_reason IS ? AND EXISTS
+        (SELECT 1 FROM test_runs WHERE id=? AND project_id=? AND state IN ('planned','running'))`)
+      .bind(reason,body.decision,u.userId,now,executionId,runId,r.project_id,e.diff_decision,e.diff_signed_by,e.diff_signed_at,e.diff_reason,runId,r.project_id),
+    auditEvent(env,r.project_id,'execution',executionId,'diff_sign',u.userId,null,null,{decision:body.decision,prev:e.diff_decision},true)]);
+  if (!results[0].meta.changes) {
+    const current=await env.DB.prepare('SELECT state FROM test_runs WHERE id=? AND project_id=?').bind(runId,r.project_id).first();
+    if (current && current.state==='closed') return json({error:'轮次已关闭，不能签字'},409);
+    const next=await env.DB.prepare('SELECT result FROM tc_executions WHERE id=? AND run_id=? AND project_id=?').bind(executionId,runId,r.project_id).first();
+    if (!next) return json({error:'执行记录不存在或项目不匹配'},404);
+    if (next.result!=='diff') return json({error:'该条结果不是 DIFF，无需签字'},409);
+    return json({error:'执行结果或签字已变化，请重试'},409);
+  }
+  return json({ok:true,decision:body.decision,signed_at:now});
+}
+async function evidenceCount(env, projectId, executionId) {
+  const row=await env.DB.prepare('SELECT COUNT(*) AS n FROM regression_evidence_refs WHERE project_id=? AND execution_id=?').bind(projectId,executionId).first();
+  return row.n;
+}
+async function apiEvidenceCreate(request,env,u,runId,executionId) {
+  const body=await readApiBody(request),ctx=await scopedRunExecution(request,env,runId,executionId,body);
+  if (ctx.error) return ctx.error;
+  const {run:r}=ctx;
+  if (r.state==='closed') return json({error:'轮次已关闭，不能修改证据'},409);
+  if (!['image','log','assertions','package'].includes(body.kind)) return json({error:'kind 必须为 image、log、assertions 或 package'},400);
+  if (typeof body.locator!=='string' || !body.locator.trim() || body.locator.length>500) return json({error:'locator 必填且不超过 500 字符'},400);
+  if (typeof body.sha256!=='string' || !/^[0-9a-f]{64}$/.test(body.sha256)) return json({error:'sha256 需为 64 位小写十六进制'},400);
+  if (body.byte_size!==undefined && body.byte_size!==null && (!Number.isSafeInteger(body.byte_size) || body.byte_size<0)) return json({error:'byte_size 必须为非负安全整数'},400);
+  if (body.summary!==undefined && (typeof body.summary!=='string' || body.summary.length>200)) return json({error:'summary 必须为不超过 200 字符的字符串'},400);
+  const provided=body.artifact_key!==undefined;
+  if (provided && (typeof body.artifact_key!=='string' || !body.artifact_key.trim() || body.artifact_key.length>100)) return json({error:'artifact_key 必须为不超过 100 字符的非空字符串'},400);
+  const count=await evidenceCount(env,r.project_id,executionId);
+  if (count>=10) return json({error:'证据引用已达上限 10 条'},409);
+  for (let attempt=0;attempt<(provided?1:20);attempt++) {
+    const key=provided ? body.artifact_key : body.kind+'-'+(count+1+attempt);
+    const insert=env.DB.prepare(`INSERT INTO regression_evidence_refs(project_id,execution_id,artifact_key,kind,locator,sha256,byte_size,summary,created_by)
+      SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM test_runs r JOIN tc_executions e ON e.run_id=r.id AND e.project_id=r.project_id
+        WHERE r.id=? AND r.project_id=? AND r.state IN ('planned','running') AND e.id=?)
+      AND (SELECT COUNT(*) FROM regression_evidence_refs WHERE project_id=? AND execution_id=?)<10
+      ON CONFLICT(execution_id,artifact_key) DO NOTHING`)
+      .bind(r.project_id,executionId,key,body.kind,body.locator,body.sha256,body.byte_size==null?null:body.byte_size,body.summary||'',u.userId,
+        runId,r.project_id,executionId,r.project_id,executionId);
+    const result=await env.DB.batch([insert,auditEvent(env,r.project_id,'evidence',null,'create',u.userId,null,null,{execution_id:executionId,artifact_key:key,kind:body.kind},true)]);
+    if (result[0].meta.changes) return json({ok:true,id:result[0].meta.last_row_id,artifact_key:key});
+    const run=await env.DB.prepare('SELECT state FROM test_runs WHERE id=? AND project_id=?').bind(runId,r.project_id).first();
+    if (!run || run.state==='closed') return json({error:'轮次已关闭，不能修改证据'},409);
+    if (await evidenceCount(env,r.project_id,executionId)>=10) return json({error:'证据引用已达上限 10 条'},409);
+    if (provided) return json({error:'artifact_key 已存在'},409);
+  }
+  return json({error:'无法分配证据编号，请重试'},409);
+}
+async function apiEvidenceDelete(request,env,u,runId,executionId,refId) {
+  const ctx=await scopedRunExecution(request,env,runId,executionId);
+  if (ctx.error) return ctx.error;
+  const {run:r}=ctx;
+  if (r.state==='closed') return json({error:'轮次已关闭，不能修改证据'},409);
+  const ref=await env.DB.prepare('SELECT artifact_key,kind FROM regression_evidence_refs WHERE id=? AND execution_id=? AND project_id=?')
+    .bind(refId,executionId,r.project_id).first();
+  if (!ref) return json({error:'证据引用不存在或项目不匹配'},404);
+  const result=await env.DB.batch([
+    env.DB.prepare(`DELETE FROM regression_evidence_refs WHERE id=? AND execution_id=? AND project_id=? AND artifact_key=? AND kind=?
+      AND EXISTS (SELECT 1 FROM test_runs WHERE id=? AND project_id=? AND state IN ('planned','running'))`)
+      .bind(refId,executionId,r.project_id,ref.artifact_key,ref.kind,runId,r.project_id),
+    auditEvent(env,r.project_id,'evidence',refId,'delete',u.userId,null,null,{artifact_key:ref.artifact_key,kind:ref.kind},true)]);
+  if (!result[0].meta.changes) {
+    const run=await env.DB.prepare('SELECT state FROM test_runs WHERE id=? AND project_id=?').bind(runId,r.project_id).first();
+    return run && run.state==='closed' ? json({error:'轮次已关闭，不能修改证据'},409) : json({error:'证据引用不存在或已变化'},404);
+  }
+  return json({ok:true});
+}
+async function runUnsignedDiff(env,r) {
+  const rows=(await env.DB.prepare(`SELECT t.tc_code FROM regression_baseline_items i
+    JOIN test_cases t ON t.id=i.tc_id AND t.project_id=i.project_id
+    JOIN tc_executions e ON e.run_id=? AND e.baseline_item_id=i.id AND e.project_id=i.project_id
+    WHERE i.project_id=? AND i.baseline_id=? AND e.result='diff' AND e.diff_decision IS NULL ORDER BY t.tc_code`)
+    .bind(r.id,r.project_id,r.baseline_id).all()).results;
+  return {unsigned_diff:rows.length,codes:rows.slice(0,5).map(x=>x.tc_code)};
 }
 
 // ---------- R5+R6 用例库 test_cases + 执行记录 tc_executions ----------
@@ -2061,6 +2181,9 @@ async function handleRequest(request, env) {
       const runDetail = p.match(/^\/api\/runs\/(\d+)$/); if (runDetail && method === 'GET') return apiRunDetail(request, env, Number(runDetail[1]));
       const runStart = p.match(/^\/api\/runs\/(\d+)\/start$/); if (runStart && method === 'POST') return apiRunStart(request, env, u, Number(runStart[1]));
       const runClose = p.match(/^\/api\/runs\/(\d+)\/close$/); if (runClose && method === 'POST') return apiRunClose(request, env, u, Number(runClose[1]));
+      const diffSign = p.match(/^\/api\/runs\/(\d+)\/items\/(\d+)\/diff-sign$/); if (diffSign && method === 'POST') return apiDiffSign(request, env, u, Number(diffSign[1]), Number(diffSign[2]));
+      const evidenceCreate = p.match(/^\/api\/runs\/(\d+)\/items\/(\d+)\/evidence$/); if (evidenceCreate && method === 'POST') return apiEvidenceCreate(request, env, u, Number(evidenceCreate[1]), Number(evidenceCreate[2]));
+      const evidenceDelete = p.match(/^\/api\/runs\/(\d+)\/items\/(\d+)\/evidence\/(\d+)$/); if (evidenceDelete && method === 'DELETE') return apiEvidenceDelete(request, env, u, Number(evidenceDelete[1]), Number(evidenceDelete[2]), Number(evidenceDelete[3]));
       if (p === '/api/baselines' && method === 'GET') return apiBaselineList(request, env);
       if (p === '/api/baselines' && method === 'POST') return apiBaselineCreate(request, env, u);
       const bl = p.match(/^\/api\/baselines\/(\d+)$/);
