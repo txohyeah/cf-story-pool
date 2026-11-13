@@ -13,6 +13,7 @@
   <a class="btn small nav-link" href="/docs.html">文档</a>
   <a class="btn small nav-link" href="/releases.html">版本</a>
   <a class="btn small nav-link" aria-current="page" href="/testcases.html">用例</a>
+  <a class="btn small nav-link" href="/feature-points.html">功能点</a>
   <a class="btn small nav-link" href="/index.html?project=all" title="在需求列表中筛选并导出">导出</a>
   <span style="flex:1"></span>
   <a class="btn small" href="javascript:location.href='/api/export-package?project=' + (PoolUI.getProject() || document.getElementById('proj-sel').value)">📦 数据包</a>
@@ -81,7 +82,7 @@ async function init() {
   const want = SP.get('project') || PoolUI.getProject();
   if (want && projects.some(p => String(p.id) === want)) { $('proj-sel').value = want; $('n-proj').value = want; }
   PoolUI.setProject($('proj-sel').value);
-  $('proj-sel').onchange = () => { closeDetail(); loadList(); };
+  $('proj-sel').onchange = () => { PoolUI.setProject($('proj-sel').value); $('n-proj').value = $('proj-sel').value; closeDetail(); loadList(); };
   $('btn-new-tc').onclick = () => { $('new-overlay').style.display = 'flex'; refreshReqOptions(); };
   await loadList();
   // 抽屉↔用例库联动：?tc=<id> 从需求抽屉跳入时自动切项目并展开该用例
@@ -96,7 +97,7 @@ async function init() {
     }
   }
 }
-let me = null, releases = [], projectReqs = [];
+let me = null, releases = [], projectReqs = [], detailTcId = null, detailFeaturePoints = [];
 
 // 方案A：related_req 下拉选项（列本项目需求，减少手填错号）
 async function refreshReqOptions() {
@@ -144,13 +145,16 @@ async function loadList() {
       }).join('') : '<div class="tc-row" style="color:#888">暂无用例，点右上角「＋ 新用例」创建</div>');
 }
 
-function closeDetail() { $('detail').classList.remove('open'); $('detail').innerHTML = ''; }
+function closeDetail() { detailTcId = null; $('detail').classList.remove('open'); $('detail').innerHTML = ''; }
 
 async function apiTcDetailWithApprover(id) { return api('/api/testcases/' + id); }
 async function openTc(id) {
   const d = await apiTcDetailWithApprover(id);
   if (!d || !d.ok) return;
   const t = d.tc, ex = d.executions;
+  const featurePoints = Array.isArray(d.feature_points) ? d.feature_points : [];
+  detailTcId = id;
+  detailFeaturePoints = featurePoints;
   // 批准人显示：approved_by 是 id，从 versions/executors 不可得——detail 补 approver 名（worker 返回 approver 字段）
   const el = $('detail');
   el.classList.add('open');
@@ -159,6 +163,7 @@ async function openTc(id) {
       <strong style="font-family:monospace;color:#4f46e5">${esc(t.tc_code)}</strong>
       <strong style="flex:1">${esc(t.title)}</strong>
       <span class="badge" style="color:${(TST[t.status]||TST.draft)[1]};background:${(TST[t.status]||TST.draft)[2]}">${(TST[t.status]||TST.draft)[0]}</span>
+      ${d.retired ? '<span class="badge">已退役</span>' : ''}
       <button class="btn small" onclick="closeDetail()">✕ 收起</button>
     </div>
     <div class="sub" style="color:#888;font-size:12px;margin:6px 0">
@@ -180,9 +185,9 @@ async function openTc(id) {
         </select></label>
       </div>
       <textarea id="t-steps" rows="10" class="mono">${esc(d.steps_md)}</textarea>
-      <input id="t-summary" placeholder="修订摘要（选填）" style="padding:8px">
+      <label class="fld"><span>${t.status === 'approved' ? '修订摘要（已批准用例必填）' : '修订摘要（选填）'}</span><input id="t-summary" style="padding:8px"></label>
       <div style="display:flex;gap:8px">
-        <button class="btn primary small" onclick="saveTc(${id}, ${t.current_version})">保存为新版本</button>
+        <button class="btn primary small" onclick="saveTc(${id}, ${t.current_version}, ${t.status === 'approved'})">保存为新版本</button>
         <button class="btn small" onclick="closeDetail();loadList()">取消</button>
       </div>
     </div>
@@ -192,6 +197,13 @@ async function openTc(id) {
       ${t.status === 'draft' ? `<button class="btn primary small" onclick="approve(${id})">批准</button>`
         : `<button class="btn small" onclick="unapprove(${id})">撤回草稿</button>`}
       <button class="btn small danger" onclick="delTc(${id})">删除</button>
+      <button class="btn small" onclick="changeTcRetired(${id}, '${d.retired ? 'revive' : 'retire'}')">${d.retired ? '恢复' : '退役'}</button>
+      <button class="btn small" onclick="showTcVersions(${id})">版本历史</button>
+    </div>
+    <div id="tc-versions" style="display:none;margin-top:10px"></div>
+    <div style="margin-top:14px"><strong>功能点</strong> <button class="btn small" onclick="editTcFeatures(${id}, ${t.project_id})">编辑</button>
+      <div style="margin-top:6px">${featurePoints.length ? featurePoints.map(f => `<span class="badge">${esc(f.fp_code)} ${esc(f.title)}</span> `).join('') : '<span class="sub">暂无关联功能点</span>'}</div>
+      <div id="tc-features-edit" style="display:none;margin-top:8px"></div>
     </div>
     <h3 style="margin:14px 0 6px;font-size:15px">📋 执行记录</h3>
     <div class="fld-row" style="flex-wrap:wrap;align-items:flex-end">
@@ -215,7 +227,8 @@ function toggleEdit() {
   const show = e.style.display === 'none';
   e.style.display = show ? 'flex' : 'none'; v.style.display = show ? 'none' : '';
 }
-async function saveTc(id, expectedVersion) {
+async function saveTc(id, expectedVersion, approved) {
+  if (approved && !$('t-summary').value.trim()) { alert('已批准用例的修订摘要必填'); return; }
   const r = await api('/api/testcases/' + id, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ expected_version: expectedVersion, title: $('t-title').value.trim(), steps_md: $('t-steps').value,
@@ -232,10 +245,55 @@ async function unapprove(id) {
   await api('/api/testcases/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'status', status: 'draft' }) });
   openTc(id);
 }
+async function editTcFeatures(id, projectId) {
+  try {
+    const r = await api('/api/feature-points?project_id=' + encodeURIComponent(projectId));
+    if (detailTcId !== id) return;
+    if (!r.ok) { alert(r.error || '加载功能点失败'); return; }
+    const items = r.items || [], chosen = new Set(detailFeaturePoints.map(f => f.id));
+    const available = new Set(items.map(f => f.id));
+    const missing = detailFeaturePoints.filter(f => !available.has(f.id));
+    const container = $('tc-features-edit');
+    container.style.display = 'block';
+    if (missing.length) {
+      container.innerHTML = '<div class="err">已关联的功能点中有不可选项，请先在功能点页恢复后再编辑，避免丢失关联。</div>';
+      return;
+    }
+    container.innerHTML = (items.length ? items.map(f => `<label style="display:block"><input type="checkbox" name="tc-fp" value="${Number(f.id)}" ${chosen.has(f.id) ? 'checked' : ''}> ${esc(f.fp_code)} ${esc(f.title)}</label>`).join('') : '<div class="sub">当前项目暂无可关联功能点</div>') +
+      `<button class="btn primary small" style="margin-top:8px" onclick="saveTcFeatures(${id})">保存关联</button> <button class="btn small" onclick="document.getElementById('tc-features-edit').style.display='none'">取消</button>`;
+  } catch (e) { if (detailTcId === id) alert('加载功能点失败'); }
+}
+async function saveTcFeatures(id) {
+  const fp_ids = Array.from(document.querySelectorAll('#tc-features-edit input[name="tc-fp"]:checked'), el => Number(el.value));
+  if (fp_ids.length > 90) { alert('最多关联 90 个功能点'); return; }
+  try {
+    const r = await api('/api/testcases/' + id + '/features', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({fp_ids}) });
+    if (!r.ok) { alert(r.error || '保存关联失败'); return; }
+    if (detailTcId === id) await openTc(id);
+  } catch (e) { alert('保存关联失败'); }
+}
+async function changeTcRetired(id, action) {
+  if (!confirm(action === 'retire' ? '确认退役该用例？' : '确认恢复该用例？')) return;
+  try {
+    const r = await api('/api/testcases/' + id + '/' + action, { method:'POST' });
+    if (!r.ok) { alert(r.error || '操作失败'); return; }
+    if (detailTcId === id) await openTc(id);
+  } catch (e) { alert('操作失败'); }
+}
+async function showTcVersions(id) {
+  try {
+    const r = await api('/api/testcases/' + id + '/versions');
+    if (detailTcId !== id) return;
+    if (!r.ok) { alert(r.error || '加载版本历史失败'); return; }
+    const versions = (r.versions || []).slice().sort((a, b) => Number(b.version) - Number(a.version));
+    const el = $('tc-versions'); el.style.display = 'block';
+    el.innerHTML = '<strong>版本历史</strong>' + (versions.length ? versions.map(v => `<details style="margin-top:8px"><summary>v${esc(v.version)} ｜ ${esc(v.change_summary || '无摘要')} ｜ ${esc(v.author || '-')} ｜ ${esc(v.created_at || '-')}</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(v.steps_md || '')}</pre></details>`).join('') : '<div class="sub">暂无历史版本</div>');
+  } catch (e) { if (detailTcId === id) alert('加载版本历史失败'); }
+}
 async function delTc(id) {
   if (!confirm('确认删除该用例（含版本与执行记录）？')) return;
-  await api('/api/testcases/' + id, { method: 'DELETE' });
-  closeDetail(); loadList();
+  const r = await api('/api/testcases/' + id, { method: 'DELETE' });
+  if (r.ok) { closeDetail(); loadList(); } else alert(r.error || '删除失败');
 }
 async function saveExec(id) {
   if (!$('x-rel').value) { alert('请先在该项目创建版本'); return; }

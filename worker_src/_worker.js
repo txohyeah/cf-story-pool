@@ -1267,10 +1267,126 @@ async function apiRelDelete(request, env, u, id) {
   return json({ ok: true });
 }
 
+// ---------- regression feature points and audit ----------
+// Existing deployments expose all active projects to authenticated users; no project membership table exists.
+async function projectVisible(env, projectId) {
+  if (!Number.isSafeInteger(projectId) || projectId < 1) return false;
+  return !!(await env.DB.prepare('SELECT id FROM projects WHERE id = ? AND is_active = 1').bind(projectId).first());
+}
+async function stepsHash(steps) {
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(steps || '')));
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+// No generic auditEvent exists in the original worker; regression_events is the project-scoped audit store.
+function auditEvent(env, projectId, type, id, action, actor, before, after, detail = {}, onlyIfChanged = false) {
+  const entitySql = id === null ? 'last_insert_rowid()' : typeof id === 'object' ? '(SELECT id FROM test_cases WHERE tc_code=?)' : '?';
+  const entityArgs = id === null ? [] : [typeof id === 'object' ? id.tcCode : id];
+  return env.DB.prepare(`INSERT INTO regression_events (project_id,entity_type,entity_id,action,actor_id,before_hash,after_hash,detail_json)
+    SELECT ?,?,${entitySql},?,?,?,?,? ${onlyIfChanged ? 'WHERE changes() = 1' : ''}`)
+    .bind(projectId, type, ...entityArgs, action, actor, before, after, JSON.stringify(detail));
+}
+async function tcRetired(env, projectId, id) {
+  const e = await env.DB.prepare(`SELECT action FROM regression_events WHERE project_id=? AND entity_type='test_case'
+    AND entity_id=? AND action IN ('retire','revive') ORDER BY id DESC LIMIT 1`).bind(projectId, id).first();
+  return !!e && e.action === 'retire';
+}
+async function scopedTc(request, env, id, body) {
+  const t = await env.DB.prepare('SELECT * FROM test_cases WHERE id=?').bind(id).first();
+  if (!t || !(await projectVisible(env, t.project_id))) return null;
+  const given = body && body.project_id !== undefined ? body.project_id : new URL(request.url).searchParams.get('project_id');
+  if (given !== null && given !== undefined && Number(given) !== t.project_id) return null;
+  return t;
+}
+async function scopedFp(request, env, id, body) {
+  const f = await env.DB.prepare('SELECT * FROM feature_points WHERE id=?').bind(id).first();
+  if (!f || !(await projectVisible(env, f.project_id))) return null;
+  const given = body && body.project_id !== undefined ? body.project_id : new URL(request.url).searchParams.get('project_id');
+  if (given !== null && given !== undefined && Number(given) !== f.project_id) return null;
+  return f;
+}
+async function apiFpList(request, env) {
+  const url = new URL(request.url), pid = Number(url.searchParams.get('project_id'));
+  if (!(await projectVisible(env, pid))) return json({ error: '项目不存在或不可见' }, 404);
+  const status = url.searchParams.get('status');
+  if (status && !['active','pending','retired'].includes(status)) return json({ error: '非法状态' }, 400);
+  const items = (await env.DB.prepare(`SELECT f.*, COUNT(m.tc_id) AS tc_count FROM feature_points f
+    LEFT JOIN tc_feature_points m ON m.project_id=f.project_id AND m.fp_id=f.id
+    WHERE f.project_id=? AND ${status ? 'f.status=?' : "f.status != 'retired'"}
+    GROUP BY f.id ORDER BY f.fp_code`).bind(...(status ? [pid, status] : [pid])).all()).results;
+  return json({ ok: true, items });
+}
+async function apiFpCreate(request, env, u) {
+  const b = await readApiBody(request), pid = Number(b.project_id), title = String(b.title || '').trim().slice(0, 200);
+  if (!(await projectVisible(env, pid))) return json({ error: '项目不存在或不可见' }, 404);
+  if (!title) return json({ error: '标题必填' }, 400);
+  const counter = await env.DB.prepare('UPDATE counters SET value=value+1 WHERE name=? RETURNING value').bind('fp_code:' + pid).first();
+  if (!counter || !Number.isSafeInteger(counter.value) || counter.value < 1) return json({ error: '功能点计数器缺失或无效，请联系管理员' }, 409);
+  const code = 'FP-' + String(counter.value).padStart(3, '0');
+  const results = await env.DB.batch([
+    env.DB.prepare('INSERT INTO feature_points(project_id,fp_code,title,description,created_by) VALUES(?,?,?,?,?)')
+      .bind(pid, code, title, String(b.description || '').slice(0, 20000), u.userId),
+    auditEvent(env, pid, 'feature_point', null, 'create', u.userId, null, null, { fp_code: code }, true)
+  ]);
+  return json({ ok: true, id: results[0].meta.last_row_id, fp_code: code });
+}
+async function apiFpChange(request, env, u, id, action) {
+  const b = action && !request.body ? {} : await readApiBody(request), f = await scopedFp(request, env, id, b);
+  if (!f) return json({ error: '功能点不存在或项目不匹配' }, 404);
+  let status = f.status, title = f.title, description = f.description;
+  if (action === 'retire') status = 'retired';
+  else if (action === 'revive') status = 'active';
+  else {
+    if (f.status === 'retired') return json({ error: '请先恢复功能点' }, 409);
+    if (b.status !== undefined && !['active','pending'].includes(b.status)) return json({ error: '退役请使用专用操作' }, 400);
+    status = b.status === undefined ? status : b.status;
+    title = b.title === undefined ? title : b.title.trim().slice(0, 200);
+    description = b.description === undefined ? description : b.description.slice(0, 20000);
+    if (!title) return json({ error: '标题必填' }, 400);
+  }
+  await env.DB.batch([
+    env.DB.prepare('UPDATE feature_points SET title=?,description=?,status=?,updated_at=? WHERE id=? AND project_id=?')
+      .bind(title, description, status, nowIso(), id, f.project_id),
+    auditEvent(env, f.project_id, 'feature_point', id, action || 'edit', u.userId, null, null, { status }, true)
+  ]);
+  return json({ ok: true, status });
+}
+async function apiTcFeatures(request, env, u, id) {
+  const b = await readApiBody(request), t = await scopedTc(request, env, id, b);
+  if (!t) return json({ error: '用例不存在或项目不匹配' }, 404);
+  if (!Array.isArray(b.fp_ids) || b.fp_ids.length > 90 || b.fp_ids.some(x => !Number.isSafeInteger(x) || x < 1) || new Set(b.fp_ids).size !== b.fp_ids.length)
+    return json({ error: 'fp_ids 必须为不重复的正整数数组（最多90项）' }, 400);
+  if (b.fp_ids.length) {
+    const rows = (await env.DB.prepare(`SELECT id FROM feature_points WHERE project_id=? AND status!='retired' AND id IN (${b.fp_ids.map(() => '?').join(',')})`)
+      .bind(t.project_id, ...b.fp_ids).all()).results;
+    if (rows.length !== b.fp_ids.length) return json({ error: '功能点不存在、已退役或不属于同一项目' }, 400);
+  }
+  const hash = await stepsHash(t.steps_md);
+  const stmts = [env.DB.prepare('DELETE FROM tc_feature_points WHERE project_id=? AND tc_id=?').bind(t.project_id,id),
+    ...b.fp_ids.map(fp => env.DB.prepare(`INSERT INTO tc_feature_points(project_id,tc_id,fp_id) VALUES(?,?,
+      (SELECT id FROM feature_points WHERE project_id=? AND id=? AND status!='retired'))`).bind(t.project_id,id,t.project_id,fp)),
+    auditEvent(env, t.project_id, 'test_case', id, 'features', u.userId, hash, hash, { fp_ids: b.fp_ids })];
+  await env.DB.batch(stmts);
+  return json({ ok: true });
+}
+async function apiTcRetirement(request, env, u, id, action) {
+  const b = !request.body ? {} : await readApiBody(request), t = await scopedTc(request, env, id, b);
+  if (!t) return json({ error: '用例不存在或项目不匹配' }, 404);
+  const hash = await stepsHash(t.steps_md);
+  await env.DB.batch([auditEvent(env, t.project_id, 'test_case', id, action, u.userId, hash, hash)]);
+  return json({ ok: true, retired: action === 'retire' });
+}
+async function apiTcVersions(request, env, id) {
+  const t = await scopedTc(request, env, id);
+  if (!t) return json({ error: '用例不存在或项目不匹配' }, 404);
+  const versions = (await env.DB.prepare(`SELECT v.version,v.steps_md,v.change_summary,v.created_at,u.display_name AS author
+    FROM test_case_versions v LEFT JOIN users u ON u.id=v.author_id WHERE v.tc_id=? ORDER BY v.version DESC`).bind(id).all()).results;
+  return json({ ok: true, versions });
+}
+
 // ---------- R5+R6 用例库 test_cases + 执行记录 tc_executions ----------
 const TC_RISKS = ['high', 'middle', 'low', 'external'];
 const TC_TYPES = ['positive', 'negative', 'boundary'];
-const TC_RESULTS = ['pass', 'fail', 'deviation'];
+const TC_RESULTS = ['pass', 'fail', 'deviation', 'diff'];
 
 async function nextTcCode(env, projectId) {
   // tc_code 全局唯一且一经分配不复用：持久计数器原子递增（MAX 法删除尾部编号后会复用，TC-015 执行实证）
@@ -1314,11 +1430,12 @@ async function apiTcCreate(request, env, u) {
   const title = String(body.title || '').trim().slice(0, 200);
   if (!pid) return json({ error: '缺少项目' }, 400);
   if (!title) return json({ error: '标题必填' }, 400);
-  const proj = await env.DB.prepare('SELECT id FROM projects WHERE id = ?').bind(pid).first();
+  const proj = await env.DB.prepare('SELECT id FROM projects WHERE id = ? AND is_active = 1').bind(pid).first();
   if (!proj) return json({ error: '项目不存在' }, 404);
   const tcCode = await nextTcCode(env, pid);
   const now = nowIso();
   const steps = String(body.steps_md || '').slice(0, 20000);
+  const createdHash = await stepsHash(steps);
   const related = body.related_req ? parseInt(body.related_req, 10) || null : null;
   if (related) {
     const req = await env.DB.prepare('SELECT project_id FROM requirements WHERE id = ?').bind(related).first();
@@ -1333,7 +1450,8 @@ async function apiTcCreate(request, env, u) {
           TC_TYPES.includes(body.ctype) ? body.ctype : 'positive', u.userId, now, now),
     env.DB.prepare(
     `INSERT INTO test_case_versions (tc_id, version, steps_md, change_summary, author_id, created_at)
-     VALUES (last_insert_rowid(), 1, ?, '首版', ?, ?)`).bind(steps, u.userId, now)]);
+     VALUES (last_insert_rowid(), 1, ?, '首版', ?, ?)`).bind(steps, u.userId, now),
+    auditEvent(env, pid, 'test_case', { tcCode }, 'create', u.userId, null, createdHash, {}, true)]);
   return json({ ok: true, id: results[0].meta.last_row_id, tc_code: tcCode });
 }
 
@@ -1345,7 +1463,7 @@ async function apiTcDetail(request, env, id) {
      LEFT JOIN users ua ON ua.id = t.approved_by
      LEFT JOIN requirements r ON r.id = t.related_req
      WHERE t.id = ?`).bind(id).first());
-  if (!t) return json({ error: '用例不存在' }, 404);
+  if (!t || !(await scopedTc(request, env, id))) return json({ error: '用例不存在或项目不匹配' }, 404);
   const cur = (await env.DB.prepare('SELECT steps_md FROM test_case_versions WHERE tc_id = ? AND version = ?')
     .bind(id, t.current_version).first());
   const versions = (await env.DB.prepare(
@@ -1359,24 +1477,25 @@ async function apiTcDetail(request, env, id) {
      JOIN releases rl ON rl.id = e.release_id
      LEFT JOIN users u ON u.id = e.executed_by
      WHERE e.tc_id = ? ORDER BY e.executed_at DESC`).bind(id).all()).results;
-  return json({ ok: true, tc: t, steps_md: cur ? cur.steps_md : '', versions, executions: execs });
+  const featurePoints = (await env.DB.prepare(`SELECT f.id, f.fp_code, f.title FROM tc_feature_points m JOIN feature_points f ON f.id = m.fp_id AND f.project_id = m.project_id WHERE m.tc_id = ? AND m.project_id = ? ORDER BY f.fp_code`).bind(id, t.project_id).all()).results;
+  const retired = await tcRetired(env, t.project_id, id);
+  return json({ ok: true, tc: t, retired, feature_points: featurePoints, steps_md: cur ? cur.steps_md : '', versions, executions: execs });
 }
 
 async function apiTcPatch(request, env, u, id) {
-  const t = (await env.DB.prepare('SELECT * FROM test_cases WHERE id = ?').bind(id).first());
-  if (!t) return json({ error: '用例不存在' }, 404);
   const body = await readApiBody(request);
+  const t = await scopedTc(request, env, id, body);
+  if (!t) return json({ error: '用例不存在或项目不匹配' }, 404);
   const now = nowIso();
+  if (body.op !== 'status' && t.status === 'approved' && !String(body.change_summary || '').trim()) return json({ error: '已批准用例的修订摘要必填' }, 400);
   if (body.op === 'status') {
     const st = body.status;
     if (st !== 'approved' && st !== 'draft') return json({ error: '非法状态' }, 400);
-    if (st === 'approved') {
-      await env.DB.prepare('UPDATE test_cases SET status = ?, approved_by = ?, approved_at = ?, updated_at = ? WHERE id = ?')
-        .bind(st, u.userId, now, now, id).run();
-    } else {
-      await env.DB.prepare('UPDATE test_cases SET status = ?, approved_by = NULL, approved_at = NULL, updated_at = ? WHERE id = ?')
-        .bind(st, now, id).run();
-    }
+    const hash = await stepsHash(t.steps_md);
+    const statement = st === 'approved'
+      ? env.DB.prepare('UPDATE test_cases SET status=?,approved_by=?,approved_at=?,updated_at=? WHERE id=? AND project_id=?').bind(st,u.userId,now,now,id,t.project_id)
+      : env.DB.prepare('UPDATE test_cases SET status=?,approved_by=NULL,approved_at=NULL,updated_at=? WHERE id=? AND project_id=?').bind(st,now,id,t.project_id);
+    await env.DB.batch([statement, auditEvent(env,t.project_id,'test_case',id,'status',u.userId,hash,hash,{ status: st },true)]);
     return json({ ok: true });
   }
   // edit：steps_md 变化 → 新版本快照；approved 用例编辑自动回 draft
@@ -1399,50 +1518,96 @@ async function apiTcPatch(request, env, u, id) {
   if (expected !== t.current_version) return json({ error: '内容已被他人修改，请刷新' }, 409);
   // 每次编辑都推进修订号，确保仅修改标题等字段也受到并发控制保护。
   const newVer = expected + 1;
+  const beforeHash = await stepsHash(t.steps_md);
+  const afterHash = await stepsHash(next.steps_md);
   const results = await env.DB.batch([
     env.DB.prepare(`UPDATE test_cases SET title = ?, steps_md = ?, risk = ?, ctype = ?, covers_urs = ?, related_req = ?,
-      status = ?, approved_by = NULL, approved_at = NULL, current_version = ?, updated_at = ? WHERE id = ? AND current_version = ?`)
+      status = ?, approved_by = NULL, approved_at = NULL, current_version = ?, updated_at = ? WHERE id = ? AND current_version = ? AND status = ?`)
       .bind(next.title, next.steps_md, next.risk, next.ctype, next.covers_urs, next.related_req,
-        backToDraft ? 'draft' : t.status, newVer, now, id, expected),
+        backToDraft ? 'draft' : t.status, newVer, now, id, expected, t.status),
     env.DB.prepare(`INSERT INTO test_case_versions (tc_id, version, steps_md, change_summary, author_id, created_at)
       SELECT ?, ?, ?, ?, ?, ? WHERE changes() = 1`)
-      .bind(id, newVer, next.steps_md, String(body.change_summary || '').slice(0, 300), u.userId, now)
+      .bind(id, newVer, next.steps_md, String(body.change_summary || '').trim().slice(0, 300), u.userId, now),
+    auditEvent(env, t.project_id, 'test_case', id, 'edit', u.userId, beforeHash, afterHash, { version: newVer }, true)
   ]);
   if (!results[0].meta.changes) return json({ error: '内容已被他人修改，请刷新' }, 409);
   return json({ ok: true, version: newVer, status: backToDraft ? 'draft' : t.status });
 }
 
 async function apiTcDelete(request, env, u, id) {
-  const stmts = [
-    env.DB.prepare('DELETE FROM tc_executions WHERE tc_id = ?').bind(id),
-    env.DB.prepare('DELETE FROM test_case_versions WHERE tc_id = ?').bind(id),
-    env.DB.prepare('DELETE FROM test_cases WHERE id = ?').bind(id)
-  ];
-  await env.DB.batch(stmts);
+  const t = await env.DB.prepare('SELECT id,project_id,steps_md FROM test_cases WHERE id=?').bind(id).first();
+  if (!t) return json({ error: '用例不存在' }, 404);
+  const ref = await env.DB.prepare('SELECT 1 AS present FROM regression_baseline_items WHERE project_id=? AND tc_id=? LIMIT 1').bind(t.project_id, id).first();
+  if (ref) return json({ error: '该用例已被基线冻结，请改用退役；历史不可删' }, 409);
+  const counts = await env.DB.prepare(`SELECT (SELECT COUNT(*) FROM tc_executions WHERE tc_id=?) AS deleted_executions,
+    (SELECT COUNT(*) FROM test_case_versions WHERE tc_id=?) AS deleted_versions`).bind(id, id).first();
+  const hash = await stepsHash(t.steps_md);
+  const results = await env.DB.batch([
+    // Fail the batch if related counts changed between the read and the transaction.
+    env.DB.prepare(`INSERT INTO regression_events(project_id,entity_type,entity_id,action)
+      SELECT ?,NULL,?,'delete_guard' WHERE (SELECT COUNT(*) FROM tc_executions WHERE tc_id=?) != ?
+      OR (SELECT COUNT(*) FROM test_case_versions WHERE tc_id=?) != ?`)
+      .bind(t.project_id, id, id, counts.deleted_executions, id, counts.deleted_versions),
+    env.DB.prepare('DELETE FROM tc_executions WHERE tc_id=?').bind(id),
+    env.DB.prepare('DELETE FROM test_case_versions WHERE tc_id=?').bind(id),
+    env.DB.prepare('DELETE FROM tc_feature_points WHERE project_id=? AND tc_id=?').bind(t.project_id, id),
+    env.DB.prepare("DELETE FROM regression_events WHERE project_id=? AND entity_type='test_case' AND entity_id=?").bind(t.project_id, id),
+    env.DB.prepare('DELETE FROM test_cases WHERE id=? AND project_id=?').bind(id, t.project_id),
+    auditEvent(env, t.project_id, 'test_case', id, 'delete', u.userId, hash, null,
+      { deleted_executions: counts.deleted_executions, deleted_versions: counts.deleted_versions }, true)
+  ]);
+  if (!results[5].meta.changes) return json({ error: '用例不存在或已被修改' }, 409);
   return json({ ok: true });
 }
 
 async function apiTcExecPut(request, env, u, id) {
-  const t = (await env.DB.prepare('SELECT id, project_id, current_version FROM test_cases WHERE id = ?').bind(id).first());
-  if (!t) return json({ error: '用例不存在' }, 404);
   const body = await readApiBody(request);
-  const rid = parseInt(body.release_id, 10);
-  if (!rid) return json({ error: '缺少 release_id' }, 400);
-  const rl = (await env.DB.prepare('SELECT id, project_id FROM releases WHERE id = ?').bind(rid).first());
-  if (!rl) return json({ error: '版本不存在' }, 404);
-  if (t.project_id !== rl.project_id) return json({ error: '用例和执行版本必须属于同一项目' }, 400);
+  if (body.run_id === undefined || body.run_id === null || body.run_id === '') {
+    const t = await env.DB.prepare('SELECT id,project_id,steps_md FROM test_cases WHERE id=?').bind(id).first();
+    if (!t) return json({ error: '用例不存在' }, 404);
+    const rid = parseInt(body.release_id, 10);
+    if (!rid) return json({ error: '缺少 release_id' }, 400);
+    const rl = await env.DB.prepare('SELECT id,project_id FROM releases WHERE id=?').bind(rid).first();
+    if (!rl) return json({ error: '版本不存在' }, 404);
+    if (t.project_id !== rl.project_id) return json({ error: '用例和执行版本必须属于同一项目' }, 400);
+    const result = TC_RESULTS.includes(body.result) ? body.result : '';
+    const hash = await stepsHash(t.steps_md);
+    const write = env.DB.prepare(`INSERT INTO tc_executions(tc_id,release_id,result,conclusion,dev_ref,ev_ref,executed_by,executed_at)
+      VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(tc_id,release_id) WHERE run_id IS NULL DO UPDATE SET
+      result=excluded.result, conclusion=excluded.conclusion, dev_ref=excluded.dev_ref, ev_ref=excluded.ev_ref,
+      executed_by=excluded.executed_by, executed_at=excluded.executed_at WHERE tc_executions.tc_version IS NULL`)
+      .bind(id, rid, result, String(body.conclusion || '').slice(0, 2000), String(body.dev_ref || '').trim().slice(0, 60),
+        String(body.ev_ref || '').trim().slice(0, 60), u.userId, nowIso());
+    const rs = await env.DB.batch([write, auditEvent(env, t.project_id, 'test_case', id, 'execute', u.userId, hash, hash, { mode: 'legacy', release_id: rid }, true)]);
+    if (!rs[0].meta.changes) return json({ error: '历史执行含版本信息，请保留并使用轮次执行' }, 409);
+    return json({ ok: true, mode: 'legacy' });
+  }
+  const runId = Number(body.run_id);
+  if (!Number.isSafeInteger(runId) || runId < 1) return json({ error: 'run_id 必须为正整数' }, 400);
+  const row = await env.DB.prepare(`SELECT r.id AS run_id, r.project_id, r.release_id, r.baseline_id,
+      i.id AS baseline_item_id, i.tc_version, r.state, t.steps_md
+    FROM test_runs r JOIN regression_baseline_items i ON i.project_id = r.project_id AND i.baseline_id = r.baseline_id
+    JOIN test_cases t ON t.id = i.tc_id AND t.project_id = r.project_id
+    WHERE r.id = ? AND t.id = ?`).bind(runId, id).first();
+  if (!row || !(await projectVisible(env, row.project_id))) return json({ error: '轮次或基线用例不存在，或项目不匹配' }, 404);
+  if (body.project_id !== undefined && Number(body.project_id) !== row.project_id) return json({ error: '项目不匹配' }, 404);
+  if (!['planned', 'running'].includes(row.state)) return json({ error: '轮次已关闭' }, 409);
+  if (body.release_id && Number(body.release_id) !== row.release_id) return json({ error: '版本与轮次不匹配' }, 400);
   const result = TC_RESULTS.includes(body.result) ? body.result : '';
-  const conclusion = String(body.conclusion || '').slice(0, 2000);
-  const devRef = String(body.dev_ref || '').trim().slice(0, 60);
-  const evRef = String(body.ev_ref || '').trim().slice(0, 60);
-  await env.DB.prepare(
-    `INSERT INTO tc_executions (tc_id, release_id, result, conclusion, dev_ref, ev_ref, executed_by, executed_at, tc_version)
-     SELECT id, ?, ?, ?, ?, ?, ?, ?, current_version FROM test_cases WHERE id = ?
-     ON CONFLICT (tc_id, release_id) DO UPDATE SET result = excluded.result, conclusion = excluded.conclusion,
-       dev_ref = excluded.dev_ref, ev_ref = excluded.ev_ref, executed_by = excluded.executed_by,
-       executed_at = excluded.executed_at, tc_version = excluded.tc_version`)
-    .bind(rid, result, conclusion, devRef, evRef, u.userId, nowIso(), id).run();
-  return json({ ok: true });
+  const write = env.DB.prepare(`INSERT INTO tc_executions
+    (tc_id, release_id, result, conclusion, dev_ref, ev_ref, executed_by, executed_at, tc_version, project_id, run_id, baseline_id, baseline_item_id)
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    WHERE EXISTS (SELECT 1 FROM test_runs WHERE id = ? AND project_id = ? AND state IN ('planned','running'))
+    ON CONFLICT (run_id, baseline_item_id) DO UPDATE SET result = excluded.result, conclusion = excluded.conclusion,
+      dev_ref = excluded.dev_ref, ev_ref = excluded.ev_ref, executed_by = excluded.executed_by,
+      executed_at = excluded.executed_at, diff_reason = '', diff_signed_by = NULL, diff_signed_at = NULL, diff_decision = NULL`)
+    .bind(id, row.release_id, result, String(body.conclusion || '').slice(0, 2000), String(body.dev_ref || '').trim().slice(0, 60),
+      String(body.ev_ref || '').trim().slice(0, 60), u.userId, nowIso(), row.tc_version, row.project_id, runId, row.baseline_id,
+      row.baseline_item_id, runId, row.project_id);
+  const hash = await stepsHash(row.steps_md);
+  const rs = await env.DB.batch([write, auditEvent(env, row.project_id, 'test_case', id, 'execute', u.userId, hash, hash, { mode: 'run', run_id: runId }, true)]);
+  if (!rs[0].meta.changes) return json({ error: '轮次已关闭' }, 409);
+  return json({ ok: true, mode: 'run' });
 }
 
 async function apiTcExecList(request, env, id) {
@@ -1482,7 +1647,8 @@ async function handleRequest(request, env) {
     const p = url.pathname;
     const method = request.method;
     if (p.startsWith('/api/') && ['POST', 'PUT', 'PATCH'].includes(method) &&
-        p !== '/api/upload' && p !== '/api/logout') await readApiBody(request);
+        p !== '/api/upload' && p !== '/api/logout' &&
+        !(!request.body && /^\/api\/(?:feature-points|testcases)\/\d+\/(?:retire|revive)$/.test(p))) await readApiBody(request);
 
     if (p === '/api/health') return json({ ok: true, t: nowIso() });
     if (p === '/api/login' && method === 'POST') return apiLogin(request, env);
@@ -1513,6 +1679,17 @@ async function handleRequest(request, env) {
       }
       const rlmx = p.match(/^\/api\/releases\/(\d+)\/executions$/);
       if (rlmx && method === 'GET') return apiTcExecList(request, env, parseInt(rlmx[1], 10));
+      if (p === '/api/feature-points' && method === 'GET') return apiFpList(request, env);
+      if (p === '/api/feature-points' && method === 'POST') return apiFpCreate(request, env, u);
+      const fpm = p.match(/^\/api\/feature-points\/(\d+)(?:\/(retire|revive))?$/);
+      if (fpm && method === 'PATCH' && !fpm[2]) return apiFpChange(request, env, u, Number(fpm[1]), null);
+      if (fpm && method === 'POST' && fpm[2]) return apiFpChange(request, env, u, Number(fpm[1]), fpm[2]);
+      const tcf = p.match(/^\/api\/testcases\/(\d+)\/features$/);
+      if (tcf && method === 'PUT') return apiTcFeatures(request, env, u, Number(tcf[1]));
+      const tcver = p.match(/^\/api\/testcases\/(\d+)\/versions$/);
+      if (tcver && method === 'GET') return apiTcVersions(request, env, Number(tcver[1]));
+      const tcret = p.match(/^\/api\/testcases\/(\d+)\/(retire|revive)$/);
+      if (tcret && method === 'POST') return apiTcRetirement(request, env, u, Number(tcret[1]), tcret[2]);
       if (p === '/api/testcases' && method === 'GET') return apiTcList(request, env);
       if (p === '/api/testcases' && method === 'POST') return apiTcCreate(request, env, u);
       const tcm = p.match(/^\/api\/testcases\/(\d+)$/);

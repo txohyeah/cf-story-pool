@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>功能点 - 需求池</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="page-testcases">
+<nav class="topbar" aria-label="主导航">
+  <a class="btn small" href="/index.html">需求</a>
+  <a class="btn small nav-link" href="/docs.html">文档</a>
+  <a class="btn small nav-link" href="/releases.html">版本</a>
+  <a class="btn small nav-link" href="/testcases.html">用例</a>
+  <a class="btn small nav-link" aria-current="page" href="/feature-points.html">功能点</a>
+  <span style="flex:1"></span>
+  <span id="current-user" class="sub"></span>
+  <select id="g-bar" aria-label="切换项目"></select>
+  <a class="btn small" href="/index.html">返回首页</a>
+  <a class="btn small" href="javascript:logout()">退出</a>
+</nav>
+<div class="wrap">
+  <div class="card section-toolbar" style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <strong>功能点</strong>
+    <select id="proj-sel" aria-label="项目" style="padding:6px 8px"></select>
+    <label>状态 <select id="status-filter"><option value="">不含已退役</option><option value="active">在维护</option><option value="pending">待补</option><option value="retired">已退役</option></select></label>
+    <span style="flex:1"></span><button class="btn primary small" id="new-button">＋ 新功能点</button>
+  </div>
+  <div class="err" id="list-error" style="display:none" role="alert"></div>
+  <div class="card" id="list"></div>
+</div>
+<div class="modal-overlay" id="edit-overlay" style="display:none">
+  <div class="modal card" style="width:min(560px,94vw);max-height:90vh;overflow:auto">
+    <h3 id="form-title">新建功能点</h3>
+    <label class="fld"><span>标题（必填）</span><input id="fp-title" maxlength="200"></label>
+    <label class="fld"><span>描述</span><textarea id="fp-description" rows="5"></textarea></label>
+    <label class="fld" id="status-row"><span>状态</span><select id="fp-status"><option value="active">在维护</option><option value="pending">待补</option></select></label>
+    <div class="err" id="form-error" style="display:none" role="alert"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="btn" id="cancel-button">取消</button><button class="btn primary" id="save-button">保存</button></div>
+  </div>
+</div>
+<script src="/app-common.js"></script>
+<script>
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function api(path, opts) {
+  try { const r = await fetch(path, opts); if (r.status === 401) { location.href = '/login'; return {}; } return await r.json(); }
+  catch (e) { return {error:'网络错误，请稍后重试'}; }
+}
+function logout() { fetch('/api/logout', { method: 'POST' }).then(() => location.href = '/login'); }
+const STATUS = { active:'在维护', pending:'待补', retired:'已退役' };
+let items = [], editingId = null, requestSeq = 0;
+function errorAt(id, message) { const el = $(id); el.textContent = message || ''; el.style.display = message ? 'block' : 'none'; }
+async function init() {
+  PoolUI.renderProjectBar('g-bar', { defaultFirst:true, onChange:v => { location.href = '/feature-points.html?project=' + encodeURIComponent(v); } });
+  const me = await api('/api/me'); $('current-user').textContent = me.display_name || me.username || '';
+  const b = await api('/api/bootstrap'); if (b.error) { errorAt('list-error', b.error); return; }
+  const projects = b.projects || [];
+  $('proj-sel').innerHTML = projects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  const want = new URL(location.href).searchParams.get('project') || PoolUI.getProject();
+  if (projects.some(p => String(p.id) === want)) $('proj-sel').value = want;
+  if ($('proj-sel').value) PoolUI.setProject($('proj-sel').value);
+  $('proj-sel').onchange = () => { location.href = '/feature-points.html?project=' + encodeURIComponent($('proj-sel').value); };
+  $('status-filter').onchange = loadList;
+  $('new-button').onclick = () => openForm(null);
+  $('cancel-button').onclick = closeForm;
+  $('save-button').onclick = saveForm;
+  await loadList();
+}
+async function loadList() {
+  const pid = $('proj-sel').value, status = $('status-filter').value, seq = ++requestSeq;
+  if (!pid) { $('list').textContent = '暂无可用项目'; return; }
+  errorAt('list-error', '');
+  const r = await api('/api/feature-points?project_id=' + encodeURIComponent(pid) + (status ? '&status=' + encodeURIComponent(status) : ''));
+  if (seq !== requestSeq) return;
+  if (!r.ok) { items = []; $('list').innerHTML = ''; errorAt('list-error', r.error || '加载失败'); return; }
+  items = r.items || [];
+  $('list').innerHTML = `<div class="tc-row" style="font-weight:700;background:#f4f4f8;cursor:default"><span class="tc-code">编号</span><span style="flex:1">标题</span><span>状态</span><span>关联用例数</span><span>操作</span></div>` +
+    (items.length ? items.map(x => `<div class="tc-row" style="cursor:default"><span class="tc-code">${esc(x.fp_code)}</span><span style="flex:1">${esc(x.title)}</span><span>${esc(STATUS[x.status] || x.status)}</span><span>${Number(x.tc_count) || 0}</span><span>${x.status === 'retired' ? `<button class="btn small" onclick="changeStatus(${Number(x.id)},'revive')">恢复</button>` : `<button class="btn small" onclick="openForm(${Number(x.id)})">编辑</button> <button class="btn small danger" onclick="changeStatus(${Number(x.id)},'retire')">退役</button>`}</span></div>`).join('') : '<div class="tc-row" style="color:#888;cursor:default">暂无功能点</div>');
+}
+function openForm(id) {
+  const x = id === null ? null : items.find(item => item.id === id);
+  if (id !== null && !x) return;
+  editingId = id; $('form-title').textContent = x ? '编辑功能点' : '新建功能点';
+  $('fp-title').value = x ? x.title : ''; $('fp-description').value = x ? x.description || '' : '';
+  $('fp-status').value = x ? x.status : 'active'; $('status-row').style.display = x ? '' : 'none';
+  errorAt('form-error', ''); $('edit-overlay').style.display = 'flex'; $('fp-title').focus();
+}
+function closeForm() { $('edit-overlay').style.display = 'none'; errorAt('form-error', ''); }
+async function saveForm() {
+  const title = $('fp-title').value.trim(), description = $('fp-description').value;
+  if (!title) { errorAt('form-error', '标题必填'); return; }
+  if (!$('proj-sel').value) { errorAt('form-error', '请选择项目'); return; }
+  const body = editingId === null ? {project_id:Number($('proj-sel').value), title, description} : {title, description, status:$('fp-status').value};
+  $('save-button').disabled = true;
+  const r = await api(editingId === null ? '/api/feature-points' : '/api/feature-points/' + editingId, {method:editingId === null ? 'POST' : 'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  $('save-button').disabled = false;
+  if (!r.ok) { errorAt('form-error', r.error || '保存失败'); return; }
+  closeForm(); await loadList();
+}
+async function changeStatus(id, action) {
+  if (!confirm(action === 'retire' ? '确认退役该功能点？' : '确认恢复该功能点？')) return;
+  const r = await api('/api/feature-points/' + id + '/' + action, {method:'POST'});
+  if (!r.ok) { errorAt('list-error', r.error || '操作失败'); return; }
+  await loadList();
+}
+init();
+</script>
+</body>
+</html>
