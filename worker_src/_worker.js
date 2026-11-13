@@ -1383,26 +1383,258 @@ async function apiTcVersions(request, env, id) {
   return json({ ok: true, versions });
 }
 
+// ---------- regression baselines ----------
+const BASELINE_LAYERS = ['R0','R1','R2','R3','R4'];
+function positiveIds(value, name, required = true) {
+  if (value === undefined && !required) return [];
+  if (!Array.isArray(value) || value.some(x => !Number.isSafeInteger(x) || x < 1))
+    throw new ApiError(name + ' 必须为正整数数组');
+  return [...new Set(value)];
+}
+async function scopedBaseline(request, env, id, body) {
+  const b = await env.DB.prepare('SELECT * FROM regression_baselines WHERE id=?').bind(id).first();
+  if (!b || !(await projectVisible(env, b.project_id))) return null;
+  const given = body && body.project_id !== undefined ? body.project_id : new URL(request.url).searchParams.get('project_id');
+  return given !== null && given !== undefined && Number(given) !== b.project_id ? null : b;
+}
+async function baselineSnapshots(env, pid, ids, layers) {
+  const snapshots = [];
+  for (const id of ids) {
+    const t = await env.DB.prepare(`SELECT t.* FROM test_cases t JOIN test_case_versions v ON v.tc_id=t.id AND v.version=t.current_version
+      WHERE t.id=? AND t.project_id=? AND t.status='approved'`).bind(id, pid).first();
+    if (!t || await tcRetired(env, pid, id)) throw new ApiError('用例不存在、未批准、已退役或不属于该项目');
+    const features = (await env.DB.prepare(`SELECT f.fp_code,f.title FROM tc_feature_points m JOIN feature_points f
+      ON f.project_id=m.project_id AND f.id=m.fp_id WHERE m.project_id=? AND m.tc_id=? ORDER BY f.fp_code`)
+      .bind(pid,id).all()).results.map(f => ({fp_code:f.fp_code,title:f.title}));
+    const snapshot_json = JSON.stringify({tc_code:t.tc_code,title:t.title,steps_md:t.steps_md,risk:t.risk,ctype:t.ctype,
+      related_req:t.related_req,covers_urs:t.covers_urs,tc_version:t.current_version,feature_points:features});
+    snapshots.push({tc_id:id,tc_version:t.current_version,layer:layers[id],snapshot_json,snapshot_hash:await stepsHash(snapshot_json), t, features});
+  }
+  return snapshots.sort((a,b) => a.tc_id-b.tc_id);
+}
+// The failing insert rolls back the D1 batch if a concurrently edited case or mapping no longer matches the snapshot.
+function baselineCaseGuard(env, pid, s) {
+  const t=s.t;
+  return env.DB.prepare(`INSERT INTO regression_events(project_id,entity_type,entity_id,action)
+    SELECT ?,NULL,?,'guard' WHERE NOT EXISTS (
+      SELECT 1 FROM test_cases t JOIN test_case_versions v ON v.tc_id=t.id AND v.version=t.current_version
+      WHERE t.id=? AND t.project_id=? AND t.status='approved' AND t.current_version=? AND t.tc_code=? AND t.title=?
+        AND t.steps_md=? AND t.risk=? AND t.ctype=? AND t.related_req IS ? AND t.covers_urs=?
+        AND COALESCE((SELECT action FROM regression_events WHERE project_id=t.project_id AND entity_type='test_case'
+          AND entity_id=t.id AND action IN ('retire','revive') ORDER BY id DESC LIMIT 1),'revive') != 'retire'
+        AND (SELECT COUNT(*) FROM tc_feature_points WHERE project_id=t.project_id AND tc_id=t.id)=json_array_length(?)
+        AND NOT EXISTS (SELECT f.fp_code,f.title FROM tc_feature_points m JOIN feature_points f ON f.project_id=m.project_id AND f.id=m.fp_id
+          WHERE m.project_id=t.project_id AND m.tc_id=t.id EXCEPT SELECT json_extract(value,'$.fp_code'),json_extract(value,'$.title') FROM json_each(?))
+    )`).bind(pid,s.tc_id,s.tc_id,pid,t.current_version,t.tc_code,t.title,t.steps_md,t.risk,t.ctype,t.related_req,t.covers_urs,JSON.stringify(s.features),JSON.stringify(s.features));
+}
+function baselineStateGuard(env, b, count, items) {
+  const ids = items.map(x => x.id);
+  const sql = `INSERT INTO regression_events(project_id,entity_type,entity_id,action) SELECT ?,NULL,?,'guard'
+    WHERE NOT EXISTS (SELECT 1 FROM regression_baselines WHERE id=? AND project_id=? AND state=?)
+    OR (SELECT COUNT(*) FROM regression_baseline_items WHERE project_id=? AND baseline_id=?) != ?
+    OR (SELECT COUNT(*) FROM regression_baseline_items WHERE project_id=? AND baseline_id=? AND id IN (SELECT value FROM json_each(?))) != ?`;
+  return env.DB.prepare(sql).bind(b.project_id,b.id,b.id,b.project_id,b.state,b.project_id,b.id,count,b.project_id,b.id,JSON.stringify(ids),count);
+}
+async function baselineBatch(env, statements) {
+  try { return await env.DB.batch(statements); }
+  catch (e) {
+    if (/NOT NULL constraint failed.*regression_events\.entity_type|UNIQUE constraint failed/i.test(String(e.message || '')))
+      throw new ApiError('基线或用例已变化，请刷新后重试',409);
+    throw e;
+  }
+}
+async function resolveBaselineCases(env, pid, tcIds, fpIds) {
+  const chosen = new Set(tcIds);
+  if (fpIds.length) {
+    const f = (await env.DB.prepare(`SELECT id FROM feature_points WHERE project_id=? AND id IN (SELECT value FROM json_each(?))`)
+      .bind(pid,JSON.stringify(fpIds)).all()).results;
+    if (f.length !== fpIds.length) throw new ApiError('功能点不存在或不属于该项目');
+    const t = (await env.DB.prepare(`SELECT DISTINCT t.id FROM tc_feature_points m JOIN test_cases t ON t.id=m.tc_id AND t.project_id=m.project_id
+      WHERE m.project_id=? AND t.status='approved' AND m.fp_id IN (SELECT value FROM json_each(?))`).bind(pid,JSON.stringify(fpIds)).all()).results;
+    for (const row of t) chosen.add(row.id);
+  }
+  if (!chosen.size) throw new ApiError('基线用例不能为空');
+  return [...chosen].sort((a,b)=>a-b);
+}
+async function apiBaselineList(request, env) {
+  const pid=Number(new URL(request.url).searchParams.get('project_id'));
+  if (!(await projectVisible(env,pid))) return json({error:'项目不存在或不可见'},404);
+  const items=(await env.DB.prepare(`SELECT b.id,b.baseline_code,b.revision,b.release_id,r.version AS release_version,b.state,
+    (SELECT COUNT(*) FROM regression_baseline_items i WHERE i.project_id=b.project_id AND i.baseline_id=b.id) AS item_count,
+    b.manifest_hash,b.frozen_at FROM regression_baselines b LEFT JOIN releases r ON r.id=b.release_id AND r.project_id=b.project_id
+    WHERE b.project_id=? ORDER BY b.release_id IS NULL,b.release_id DESC,b.baseline_code,b.revision DESC`).bind(pid).all()).results;
+  return json({ok:true,items});
+}
+async function apiBaselineDetail(request, env, id) {
+  const b=await scopedBaseline(request,env,id);
+  if (!b) return json({error:'基线不存在或项目不匹配'},404);
+  const items=(await env.DB.prepare(`SELECT i.id,i.tc_id,json_extract(i.snapshot_json,'$.tc_code') AS tc_code,
+    json_extract(i.snapshot_json,'$.title') AS title,i.layer,i.tc_version,i.snapshot_hash
+    FROM regression_baseline_items i WHERE i.project_id=? AND i.baseline_id=? ORDER BY i.tc_id`).bind(b.project_id,id).all()).results;
+  return json({ok:true,baseline:b,items});
+}
+async function apiBaselineCreate(request,env,u) {
+  const body=await readApiBody(request), pid=Number(body.project_id), release=body.release_id ? Number(body.release_id) : null;
+  if (!(await projectVisible(env,pid))) return json({error:'项目不存在或不可见'},404);
+  if (!BASELINE_LAYERS.includes(body.layer)) return json({error:'layer 必须为 R0 至 R4'},400);
+  if (release && !(await env.DB.prepare('SELECT id FROM releases WHERE id=? AND project_id=?').bind(release,pid).first())) return json({error:'版本不存在或项目不匹配'},400);
+  const ids=await resolveBaselineCases(env,pid,positiveIds(body.tc_ids,'tc_ids'),positiveIds(body.fp_ids,'fp_ids',false));
+  const layers=Object.fromEntries(ids.map(id=>[id,body.layer])), snaps=await baselineSnapshots(env,pid,ids,layers);
+  const counterName='baseline_code:'+pid;
+  const counter=await env.DB.prepare(`INSERT INTO counters(name,value) VALUES(?,1)
+    ON CONFLICT(name) DO UPDATE SET value=value+1 RETURNING value`).bind(counterName).first();
+  if (!counter || !Number.isSafeInteger(counter.value) || counter.value<=0) throw new ApiError('基线编号计数器异常，已停止取号',500);
+  const baselineCode='BL-'+String(counter.value).padStart(3,'0');
+  const statements=[...snaps.map(s=>baselineCaseGuard(env,pid,s)),
+    env.DB.prepare(`INSERT INTO regression_baselines(project_id,release_id,baseline_code,revision,state,data_manifest_json,manifest_hash,created_by)
+      VALUES(?,?,?,1,'draft',?,'',?)`).bind(pid,release,baselineCode,JSON.stringify({layers:[body.layer],item_count:snaps.length}),u.userId),
+    auditEvent(env,pid,'baseline',null,'create',u.userId,null,null,{item_count:snaps.length},true)];
+  for (const s of snaps) statements.push(env.DB.prepare(`INSERT INTO regression_baseline_items(project_id,baseline_id,tc_id,tc_version,layer,snapshot_json,snapshot_hash)
+    SELECT ?,id,?,?,?,?,? FROM regression_baselines WHERE project_id=? AND baseline_code=? AND revision=1 AND release_id IS ?`)
+    .bind(pid,s.tc_id,s.tc_version,s.layer,s.snapshot_json,s.snapshot_hash,pid,baselineCode,release));
+  const result=await baselineBatch(env,statements), insert=result[snaps.length], id=insert.meta.last_row_id;
+  const b=await env.DB.prepare('SELECT id,baseline_code,revision FROM regression_baselines WHERE id=? AND project_id=?').bind(id,pid).first();
+  return json({ok:true,id:b.id,baseline_code:b.baseline_code,revision:b.revision,item_count:snaps.length});
+}
+async function baselineItems(env, b) {
+  return (await env.DB.prepare('SELECT id,tc_id,tc_version,layer FROM regression_baseline_items WHERE project_id=? AND baseline_id=? ORDER BY tc_id').bind(b.project_id,b.id).all()).results;
+}
+function baselineDraftMetadataUpdate(env, projectId, baselineId, onlyIfChanged = false) {
+  return env.DB.prepare(`UPDATE regression_baselines SET data_manifest_json=json_object(
+      'layers',json((SELECT json_group_array(layer) FROM
+        (SELECT DISTINCT layer FROM regression_baseline_items WHERE project_id=? AND baseline_id=? ORDER BY layer))),
+      'item_count',(SELECT COUNT(*) FROM regression_baseline_items WHERE project_id=? AND baseline_id=?)),
+      updated_at=datetime('now') WHERE project_id=? AND id=? AND state='draft' ${onlyIfChanged ? 'AND changes()=1' : ''}`)
+    .bind(projectId,baselineId,projectId,baselineId,projectId,baselineId);
+}
+async function baselineFreezeConflicts(env, b) {
+  return (await env.DB.prepare(`SELECT COALESCE(t.tc_code,json_extract(i.snapshot_json,'$.tc_code'),'TC-' || i.tc_id) AS tc_code
+    FROM regression_baseline_items i LEFT JOIN test_cases t ON t.id=i.tc_id AND t.project_id=i.project_id
+    LEFT JOIN test_case_versions v ON v.tc_id=t.id AND v.version=t.current_version
+    WHERE i.project_id=? AND i.baseline_id=? AND (t.id IS NULL OR t.status!='approved' OR v.id IS NULL
+      OR t.current_version!=i.tc_version OR COALESCE((SELECT action FROM regression_events
+        WHERE project_id=i.project_id AND entity_type='test_case' AND entity_id=i.tc_id
+          AND action IN ('retire','revive') ORDER BY id DESC LIMIT 1),'revive')='retire')
+    ORDER BY i.tc_id`).bind(b.project_id,b.id).all()).results.map(row=>row.tc_code);
+}
+function freezeConflictResponse(codes) {
+  return json({error:'以下用例在加入基线后已变更，无法冻结：'+codes.join('、')+'（请先移出基线）'},409);
+}
+async function apiBaselineFreeze(request,env,u,id) {
+  const b=await scopedBaseline(request,env,id);
+  if (!b) return json({error:'基线不存在或项目不匹配'},404);
+  if (b.state !== 'draft') return json({error:'基线已冻结或状态不符'},409);
+  const items=await baselineItems(env,b);
+  if (!items.length) return json({error:'基线条目不能为空'},400);
+  const conflicts=await baselineFreezeConflicts(env,b);
+  if (conflicts.length) return freezeConflictResponse(conflicts);
+  const layers=Object.fromEntries(items.map(x=>[x.tc_id,x.layer]));
+  let snaps;
+  try { snaps=await baselineSnapshots(env,b.project_id,items.map(x=>x.tc_id),layers); }
+  catch (e) {
+    const changed=await baselineFreezeConflicts(env,b);
+    if (changed.length) return freezeConflictResponse(changed);
+    throw e;
+  }
+  const changed=snaps.filter(s=>items.find(item=>item.tc_id===s.tc_id).tc_version!==s.tc_version).map(s=>s.t.tc_code);
+  if (changed.length) return freezeConflictResponse(changed);
+  const manifestItems=snaps.map(s=>({tc_id:s.tc_id,tc_version:s.tc_version,snapshot_hash:s.snapshot_hash}));
+  const manifest_hash=await stepsHash(manifestItems.map(s=>`${s.tc_id}:${s.tc_version}:${s.snapshot_hash}`).join('\n'));
+  const now=nowIso(), manifest=JSON.stringify({items:manifestItems,generated_at:now});
+  const statements=[baselineStateGuard(env,b,items.length,items),...snaps.map(s=>baselineCaseGuard(env,b.project_id,s))];
+  for (const s of snaps) statements.push(env.DB.prepare(`UPDATE regression_baseline_items SET tc_version=?,snapshot_json=?,snapshot_hash=?,updated_at=?
+    WHERE project_id=? AND baseline_id=? AND tc_id=? AND EXISTS (SELECT 1 FROM regression_baselines WHERE id=? AND project_id=? AND state='draft')`)
+    .bind(s.tc_version,s.snapshot_json,s.snapshot_hash,now,b.project_id,id,s.tc_id,id,b.project_id));
+  statements.push(env.DB.prepare(`UPDATE regression_baselines SET state='frozen',manifest_hash=?,data_manifest_json=?,frozen_by=?,frozen_at=?,updated_at=?
+    WHERE id=? AND project_id=? AND state='draft'`).bind(manifest_hash,manifest,u.userId,now,now,id,b.project_id));
+  statements.push(auditEvent(env,b.project_id,'baseline',id,'freeze',u.userId,null,manifest_hash,{item_count:items.length},true));
+  let results;
+  try { results=await baselineBatch(env,statements); }
+  catch (e) {
+    if (e instanceof ApiError && e.status===409) {
+      const current=await env.DB.prepare('SELECT state FROM regression_baselines WHERE id=? AND project_id=?').bind(id,b.project_id).first();
+      if (current && current.state!=='draft') return json({error:'基线已冻结或状态不符'},409);
+      const changed=await baselineFreezeConflicts(env,b);
+      if (changed.length) return freezeConflictResponse(changed);
+    }
+    throw e;
+  }
+  if (!results[results.length-2].meta.changes) return json({error:'基线已冻结或状态不符'},409);
+  return json({ok:true,manifest_hash});
+}
+async function apiBaselineRevision(request,env,u,id) {
+  const b=await scopedBaseline(request,env,id);
+  if (!b) return json({error:'基线不存在或项目不匹配'},404);
+  const items=await baselineItems(env,b);
+  if (!items.length) return json({error:'基线条目不能为空'},400);
+  const layers=Object.fromEntries(items.map(x=>[x.tc_id,x.layer]));
+  const snaps=await baselineSnapshots(env,b.project_id,items.map(x=>x.tc_id),layers), revision=b.revision+1;
+  const stmts=[baselineStateGuard(env,b,items.length,items),...snaps.map(s=>baselineCaseGuard(env,b.project_id,s)),
+    env.DB.prepare(`INSERT INTO regression_baselines(project_id,release_id,baseline_code,revision,state,data_manifest_json,manifest_hash,created_by)
+      VALUES(?,?,?,?,'draft',?,'',?)`).bind(b.project_id,b.release_id,b.baseline_code,revision,JSON.stringify({layers:[...new Set(items.map(x=>x.layer))].sort(),item_count:items.length}),u.userId),
+    auditEvent(env,b.project_id,'baseline',null,'revision',u.userId,null,null,{source_id:id},true)];
+  for (const s of snaps) stmts.push(env.DB.prepare(`INSERT INTO regression_baseline_items(project_id,baseline_id,tc_id,tc_version,layer,snapshot_json,snapshot_hash)
+    SELECT ?,id,?,?,?,?,? FROM regression_baselines WHERE project_id=? AND release_id IS ? AND baseline_code=? AND revision=?`)
+    .bind(b.project_id,s.tc_id,s.tc_version,s.layer,s.snapshot_json,s.snapshot_hash,b.project_id,b.release_id,b.baseline_code,revision));
+  const results=await baselineBatch(env,stmts), newId=results[1+snaps.length].meta.last_row_id;
+  return json({ok:true,id:newId,baseline_code:b.baseline_code,revision,item_count:snaps.length});
+}
+async function apiBaselineAddItems(request,env,u,id) {
+  const body=await readApiBody(request), b=await scopedBaseline(request,env,id,body);
+  if (!b) return json({error:'基线不存在或项目不匹配'},404);
+  if (b.state!=='draft') return json({error:'基线已冻结，不可修改'},409);
+  const ids=positiveIds(body.tc_ids,'tc_ids');
+  if (!ids.length) return json({error:'基线用例不能为空'},400);
+  const items=await baselineItems(env,b);
+  let draftLayer; try { const metadata=JSON.parse(b.data_manifest_json || '{}'); draftLayer=(Array.isArray(metadata.layers) && metadata.layers.length===1 ? metadata.layers[0] : null) || metadata.layer; } catch {}
+  const itemLayers=[...new Set(items.map(item=>item.layer))];
+  const layer=body.layer || draftLayer || (itemLayers.length===1 ? itemLayers[0] : null);
+  if (!BASELINE_LAYERS.includes(layer)) return json({error:'缺少基线分层，请提供 layer'},400);
+  if (ids.some(x=>items.some(i=>i.tc_id===x))) return json({error:'用例已在基线中'},409);
+  const snaps=await baselineSnapshots(env,b.project_id,ids,Object.fromEntries(ids.map(x=>[x,layer])));
+  const stmts=[baselineStateGuard(env,b,items.length,items),...snaps.map(s=>baselineCaseGuard(env,b.project_id,s))];
+  for (const s of snaps) stmts.push(env.DB.prepare(`INSERT INTO regression_baseline_items(project_id,baseline_id,tc_id,tc_version,layer,snapshot_json,snapshot_hash)
+    SELECT ?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM regression_baselines WHERE id=? AND project_id=? AND state='draft')`)
+    .bind(b.project_id,id,s.tc_id,s.tc_version,s.layer,s.snapshot_json,s.snapshot_hash,id,b.project_id));
+  stmts.push(baselineDraftMetadataUpdate(env,b.project_id,id));
+  stmts.push(auditEvent(env,b.project_id,'baseline',id,'add_item',u.userId,null,null,{tc_ids:ids},true));
+  try { await baselineBatch(env,stmts); }
+  catch (e) {
+    if (e instanceof ApiError && e.status===409) {
+      const current=await env.DB.prepare('SELECT state FROM regression_baselines WHERE id=? AND project_id=?').bind(id,b.project_id).first();
+      if (current && current.state!=='draft') return json({error:'基线已冻结，不可修改'},409);
+    }
+    throw e;
+  }
+  return json({ok:true,item_count:snaps.length});
+}
+async function apiBaselineRemoveItem(request,env,u,id,itemId) {
+  const b=await scopedBaseline(request,env,id);
+  if (!b) return json({error:'基线不存在或项目不匹配'},404);
+  if (b.state!=='draft') return json({error:'基线已冻结，不可修改'},409);
+  const results=await env.DB.batch([
+    env.DB.prepare(`DELETE FROM regression_baseline_items WHERE id=? AND baseline_id=? AND project_id=?
+      AND EXISTS (SELECT 1 FROM regression_baselines WHERE id=? AND project_id=? AND state='draft')`).bind(itemId,id,b.project_id,id,b.project_id),
+    baselineDraftMetadataUpdate(env,b.project_id,id,true),
+    auditEvent(env,b.project_id,'baseline',id,'remove_item',u.userId,null,null,{item_id:itemId},true)]);
+  if (!results[0].meta.changes) {
+    const current=await env.DB.prepare('SELECT state FROM regression_baselines WHERE id=? AND project_id=?').bind(id,b.project_id).first();
+    return current && current.state!=='draft' ? json({error:'基线已冻结，不可修改'},409) : json({error:'条目不存在'},404);
+  }
+  return json({ok:true});
+}
+
 // ---------- R5+R6 用例库 test_cases + 执行记录 tc_executions ----------
 const TC_RISKS = ['high', 'middle', 'low', 'external'];
 const TC_TYPES = ['positive', 'negative', 'boundary'];
 const TC_RESULTS = ['pass', 'fail', 'deviation', 'diff'];
 
 async function nextTcCode(env, projectId) {
-  // tc_code 全局唯一且一经分配不复用：持久计数器原子递增（MAX 法删除尾部编号后会复用，TC-015 执行实证）
-  for (let i = 0; i < 5; i++) {
-    const r = (await env.DB.prepare(
-      `UPDATE counters SET value = value + 1 WHERE name = 'tc_code' RETURNING value`).first());
-    const n = r && r.value ? r.value : 0;
-    if (!n) { // 兜底：计数器行丢失时重建
-      await env.DB.prepare("INSERT OR IGNORE INTO counters (name, value) VALUES ('tc_code', 1)").run();
-      const r2 = (await env.DB.prepare("SELECT value FROM counters WHERE name = 'tc_code'").first());
-      if (r2 && r2.value) return 'TC-' + String(r2.value).padStart(3, '0');
-      continue;
-    }
-    return 'TC-' + String(n).padStart(3, '0');
-  }
-  return 'TC-' + Date.now();
+  // tc_code 永不复用：计数器行必须已存在（生产由迁移种下），缺行即停号交人工处理。
+  // 不在此重建计数器——重建会从 1 重新发号，撞上历史 TC 编号（防的是 P1-C1.5 评审里发现的复用风险）。
+  const r = await env.DB.prepare(`UPDATE counters SET value=value+1 WHERE name='tc_code' RETURNING value`).first();
+  if (!r || !Number.isSafeInteger(r.value) || r.value<=0) throw new ApiError('用例编号计数器缺失，已停止取号（请从备份恢复 counters 表）',500);
+  return 'TC-' + String(r.value).padStart(3, '0');
 }
 
 async function apiTcList(request, env) {
@@ -1648,7 +1880,7 @@ async function handleRequest(request, env) {
     const method = request.method;
     if (p.startsWith('/api/') && ['POST', 'PUT', 'PATCH'].includes(method) &&
         p !== '/api/upload' && p !== '/api/logout' &&
-        !(!request.body && /^\/api\/(?:feature-points|testcases)\/\d+\/(?:retire|revive)$/.test(p))) await readApiBody(request);
+        !(!request.body && (/^\/api\/(?:feature-points|testcases)\/\d+\/(?:retire|revive)$/.test(p) || /^\/api\/baselines\/\d+\/(?:freeze|revision)$/.test(p)))) await readApiBody(request);
 
     if (p === '/api/health') return json({ ok: true, t: nowIso() });
     if (p === '/api/login' && method === 'POST') return apiLogin(request, env);
@@ -1679,6 +1911,19 @@ async function handleRequest(request, env) {
       }
       const rlmx = p.match(/^\/api\/releases\/(\d+)\/executions$/);
       if (rlmx && method === 'GET') return apiTcExecList(request, env, parseInt(rlmx[1], 10));
+      if (p === '/api/baselines' && method === 'GET') return apiBaselineList(request, env);
+      if (p === '/api/baselines' && method === 'POST') return apiBaselineCreate(request, env, u);
+      const bl = p.match(/^\/api\/baselines\/(\d+)$/);
+      if (bl && method === 'GET') return apiBaselineDetail(request, env, Number(bl[1]));
+      const bla = p.match(/^\/api\/baselines\/(\d+)\/(freeze|revision|items)$/);
+      if (bla && method === 'POST') {
+        const id = Number(bla[1]);
+        if (bla[2] === 'freeze') return apiBaselineFreeze(request, env, u, id);
+        if (bla[2] === 'revision') return apiBaselineRevision(request, env, u, id);
+        return apiBaselineAddItems(request, env, u, id);
+      }
+      const bli = p.match(/^\/api\/baselines\/(\d+)\/items\/(\d+)$/);
+      if (bli && method === 'DELETE') return apiBaselineRemoveItem(request, env, u, Number(bli[1]), Number(bli[2]));
       if (p === '/api/feature-points' && method === 'GET') return apiFpList(request, env);
       if (p === '/api/feature-points' && method === 'POST') return apiFpCreate(request, env, u);
       const fpm = p.match(/^\/api\/feature-points\/(\d+)(?:\/(retire|revive))?$/);
