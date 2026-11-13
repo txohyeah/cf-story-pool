@@ -1658,7 +1658,7 @@ function compareRunData(after,before) {
   if (reasons.length) return {ok:true,comparable:false,reasons,pairs:[]};
   const old=new Map(before.items.map(i=>[i.tc_id,i])), current=new Map(after.items.map(i=>[i.tc_id,i]));
   const ids=[...new Set([...old.keys(),...current.keys()])].sort((a,b)=>a-b);
-  const summary={new_fail:0,old_fail:0,fixed:0,diff_accepted:0,not_comparable:0,total_pairs:ids.length};
+  const summary={new_fail:0,old_fail:0,fixed:0,diff_accepted:0,still_pass:0,not_comparable:0,total_pairs:ids.length};
   const pairs=ids.map(id=>{
     const b=old.get(id), a=current.get(id), source=a||b;
     const beforeResult=b?{result:b.result,diff_decision:b.diff_decision}:null;
@@ -1667,10 +1667,13 @@ function compareRunData(after,before) {
     if (!b) note='only_in_after'; else if (!a) note='only_in_before';
     else {
       const x=reportEffective(b.result,b.diff_decision), y=reportEffective(a.result,a.diff_decision);
-      if (x==='pass' && y==='fail') category='new_fail';
+      // 方案口径：失败→获批 DIFF 记「差异获批」，不可并入「已修复」，故 diff_accepted 必须先判
+      if (x==='empty' || y==='empty') category='not_comparable';
+      else if (a.result==='diff' && a.diff_decision==='accept') category='diff_accepted';
+      else if (x==='pass' && y==='fail') category='new_fail';
       else if (x==='fail' && y==='fail') category='old_fail';
       else if (x==='fail' && y==='pass') category='fixed';
-      else if (a.result==='diff' && a.diff_decision==='accept') category='diff_accepted';
+      else if (x==='pass' && y==='pass') category='still_pass';
     }
     summary[category]++;
     return {tc_id:id,tc_code:source.tc_code,title:source.title,before:beforeResult,after:afterResult,category,...(note?{note}:{})};
