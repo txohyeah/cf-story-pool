@@ -26,6 +26,7 @@
     <select id="proj-sel" aria-label="项目" style="padding:6px 8px;max-width:100%"></select>
     <span style="flex:1"></span><button class="btn primary small" id="new-button">＋ 新建基线</button>
   </div>
+  <div class="sub" id="release-filter-bar" style="display:none;margin:0 0 10px;overflow-wrap:anywhere"></div>
   <div class="err" id="page-error" role="alert" style="display:none;overflow-wrap:anywhere"></div>
   <div id="list-view"><div class="card" id="baseline-list" style="min-width:0;overflow-wrap:anywhere"></div></div>
   <div id="detail-view" class="card" style="display:none;min-width:0;overflow-wrap:anywhere"></div>
@@ -57,6 +58,7 @@ function errorAt(id, message) { const el = $(id); el.textContent = message || ''
 async function logout() { const r = await api('/api/logout', {method:'POST'}); if (r.error) errorAt('page-error', r.error); else location.href = '/login'; }
 const STATUS = {draft:'草稿',frozen:'已冻结',approved:'已批准'};
 let baselines = [], releases = [], cases = [], features = [], selected = new Set(), detail = null, selectionMode = 'create', loadSeq = 0, detailSeq = 0;
+let releaseFilter = new URL(location.href).searchParams.get('release') || '';
 function versionName(v) { const s = String(v == null ? '' : v); return s ? (/^v/i.test(s) ? s : 'v' + s) : '通用（不绑版本）'; }
 function shortHash(s) { return s ? String(s).slice(0,8) : '—'; }
 function fmtAt(s) { if (!s) return '—'; const raw=String(s); const iso=/Z$|[+-]\d\d:\d\d$/.test(raw)?raw:raw.replace(' ','T')+'Z'; const d=new Date(iso); return isNaN(d.getTime())?raw:d.toLocaleString('zh-CN',{hour12:false}); }
@@ -81,15 +83,33 @@ async function init() {
 async function loadList() {
   const pid=$('proj-sel').value, seq=++loadSeq; errorAt('page-error','');
   if (!pid) { $('baseline-list').textContent='暂无可用项目，请先创建项目。'; return false; }
-  const r=await api('/api/baselines?project_id='+encodeURIComponent(pid));
+  const [r, releaseData]=await Promise.all([
+    api('/api/baselines?project_id='+encodeURIComponent(pid)),
+    releaseFilter ? api('/api/releases?project='+encodeURIComponent(pid)) : Promise.resolve(null)
+  ]);
   if (seq!==loadSeq) return false;
   if (!r.ok) { errorAt('page-error',r.error || '加载基线失败'); return false; }
-  baselines=r.items || []; const groups=new Map();
-  for (const b of baselines) { const key=b.release_id == null ? 'common' : String(b.release_id); if(!groups.has(key)) groups.set(key,{version:b.release_version,items:[]}); groups.get(key).items.push(b); }
+  baselines=r.items || [];
+  if (releaseData && releaseData.ok) releases=releaseData.items || [];
+  else if (releaseData) errorAt('page-error',releaseData.error || '加载版本失败');
+  const selectedRelease=releaseFilter && releaseData && releaseData.ok ? releases.find(x=>String(x.id)===releaseFilter) : null;
+  const filterLabel=selectedRelease ? versionName(selectedRelease.version) : (/^[1-9]\d*$/.test(releaseFilter) ? '版本 #'+releaseFilter : '未知版本');
+  $('release-filter-bar').style.display=releaseFilter ? 'block' : 'none';
+  $('release-filter-bar').innerHTML=releaseFilter ? `只看 ${esc(filterLabel)} 的基线 <button class="btn small" onclick="clearReleaseFilter()">显示全部</button>` : '';
+  const visibleBaselines=releaseFilter ? baselines.filter(b=>b.release_id != null && String(b.release_id)===releaseFilter) : baselines;
+  const groups=new Map();
+  for (const b of visibleBaselines) { const key=b.release_id == null ? 'common' : String(b.release_id); if(!groups.has(key)) groups.set(key,{version:b.release_version,items:[]}); groups.get(key).items.push(b); }
   const container=$('baseline-list');
-  if (!baselines.length) { container.innerHTML='<div class="sub">暂无基线。基线用于冻结某一版本下的回归用例范围与内容。</div><button class="btn primary small" style="margin-top:8px" onclick="openSelection(\'create\')">新建基线</button>'; return true; }
+  if (!visibleBaselines.length) {
+    container.innerHTML=releaseFilter ? `<div class="sub">${esc(filterLabel)} 还没有基线，点右上角「＋ 新建基线」为该版本冻结一份。</div>` : '<div class="sub">暂无基线。基线用于冻结某一版本下的回归用例范围与内容。</div><button class="btn primary small" style="margin-top:8px" onclick="openSelection(\'create\')">新建基线</button>';
+    return true;
+  }
   container.innerHTML=[...groups.values()].map(g => `<h3 style="margin:12px 0 6px">${esc(versionName(g.version))}</h3>` + g.items.slice().sort((a,b)=>Number(b.revision)-Number(a.revision)).map(b => `<div class="tc-row" style="cursor:default;min-width:0"><strong>${esc(b.baseline_code)} · rev${esc(b.revision)}</strong><span class="badge">${esc(STATUS[b.state] || b.state)}</span><span>${esc(b.item_count)} 条</span><span class="sub" style="overflow-wrap:anywhere">${esc(shortHash(b.manifest_hash))}</span><span class="sub" style="overflow-wrap:anywhere">${esc(fmtAt(b.frozen_at))}</span><button class="btn small" onclick="loadDetail(${Number(b.id)})">查看</button></div>`).join('')).join('');
   return true;
+}
+function clearReleaseFilter() {
+  const url=new URL(location.href); url.searchParams.delete('release'); history.replaceState(null,'',url.pathname+url.search+url.hash);
+  releaseFilter=''; detail=null; detailSeq++; $('detail-view').style.display='none'; $('list-view').style.display='block'; loadList();
 }
 async function loadDetail(id, keepError) {
   const seq=++detailSeq, pid=$('proj-sel').value; if (!keepError) errorAt('page-error','');
@@ -132,6 +152,8 @@ async function openSelection(mode) {
   const data=await loadSelectionData(pid); if ($('select-overlay').style.display==='none' || $('proj-sel').value!==pid) return;
   if (!data.ok) { $('case-list').textContent='无法加载用例。'; errorAt('modal-error',data.error); return; }
   $('release-select').innerHTML='<option value="">通用（不绑版本）</option>'+releases.map(r=>`<option value="${Number(r.id)}">${esc(versionName(r.version))}（${esc(r.status)}）</option>`).join('');
+  if (mode==='create' && releaseFilter && releases.some(r=>String(r.id)===releaseFilter)) $('release-select').value=releaseFilter;
+  else $('release-select').value='';
   $('release-hint').textContent=releases.length?'':'当前项目暂无发布版本，可创建通用基线。';
   $('feature-filter').innerHTML='<option value="">全部功能点</option>'+features.map(f=>`<option value="${Number(f.id)}">${esc(f.fp_code)} ${esc(f.title)}</option>`).join('');
   $('submit-select').disabled=false; renderCases();

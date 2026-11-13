@@ -28,6 +28,8 @@
     <span style="flex:1"></span>
     <button class="btn primary small" id="btn-new-rel">＋ 新版本</button>
   </div>
+  <div class="sub" id="common-baseline" style="margin:0 0 10px;overflow-wrap:anywhere"></div>
+  <div class="err" id="list-error" role="alert" style="display:none"></div>
   <div id="list"></div>
   <div id="empty" class="card" style="display:none;text-align:center;color:#888">本项目暂无版本，点右上角「＋ 新版本」创建</div>
 </div>
@@ -97,15 +99,40 @@ async function init() {
 async function loadList() {
   const pid = $('proj-sel').value;
   if (!pid) return;
-  const r = await api('/api/releases?project=' + pid);
+  $('list-error').style.display = 'none';
+  let r, baselineResult;
+  try {
+    [r, baselineResult] = await Promise.all([
+      api('/api/releases?project=' + encodeURIComponent(pid)),
+      fetch('/api/baselines?project_id=' + encodeURIComponent(pid))
+        .then(response => response.ok ? response.json() : {ok:false})
+        .catch(() => ({ok:false}))
+    ]);
+  } catch (e) {
+    $('list-error').textContent = '加载版本失败，请稍后重试'; $('list-error').style.display = 'block'; return;
+  }
+  if (!r || !r.ok) { $('list-error').textContent = (r && r.error) || '加载版本失败'; $('list-error').style.display = 'block'; return; }
   const items = (r && r.items) || [];
+  const latest = new Map(); let common = null;
+  for (const b of (baselineResult && baselineResult.ok && Array.isArray(baselineResult.items) ? baselineResult.items : [])) {
+    if (b.release_id == null) { if (!common || Number(b.revision) > Number(common.revision)) common = b; continue; }
+    const key = String(b.release_id), current = latest.get(key);
+    if (!current || Number(b.revision) > Number(current.revision)) latest.set(key, b);
+  }
+  const commonText = common ? 'rev' + esc(common.revision) + (common.state === 'frozen' ? ' 已冻结' : ' 草稿') : '无';
+  $('common-baseline').innerHTML = `通用基线：${commonText} <a href="/baselines.html?project=${encodeURIComponent(pid)}">${common ? '查看' : '去创建'}</a>`;
   $('empty').style.display = items.length ? 'none' : 'block';
   $('list').innerHTML = items.map(x => {
     const canConfirm = x.status !== 'published' && x.status !== 'closed' && me && x.created_by !== me.userId;
+    const baseline = latest.get(String(x.id));
+    const baselineText = baseline ? '基线 rev' + String(baseline.revision) + (baseline.state === 'frozen' ? ' 已冻结' : baseline.state === 'draft' ? ' 草稿' : '') : '无基线';
+    const baselineUrl = '/baselines.html?project=' + encodeURIComponent(pid) + '&release=' + encodeURIComponent(x.id);
     return `<div class="proj-card">
-      <div class="proj-head">
+      <div class="proj-head" style="flex-wrap:wrap">
         <strong>${esc(x.version)}</strong>
         ${stBadge(x.status)}
+        <span class="badge">${esc(baselineText)}</span>
+        <a class="btn small" href="${esc(baselineUrl)}">${baseline ? '查看' : '去创建'}</a>
         <span class="sub mono" style="color:#888;font-size:12px">🐛 ${x.bug_count} 个关联单</span>
       </div>
       <div class="sub" style="color:#666;font-size:13px;margin-top:4px">${x.change_scope ? '变更：' + esc(x.change_scope) : ''}${x.retest_scope ? '<br>再验证：' + esc(x.retest_scope) : ''}</div>
