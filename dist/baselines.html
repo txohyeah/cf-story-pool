@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>基线 - 需求池</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="page-testcases">
+<nav class="topbar" aria-label="主导航">
+  <a class="btn small" href="/index.html">需求</a>
+  <a class="btn small nav-link" href="/docs.html">文档</a>
+  <a class="btn small nav-link" href="/releases.html">版本</a>
+  <a class="btn small nav-link" href="/testcases.html">用例</a>
+  <a class="btn small nav-link" href="/feature-points.html">功能点</a>
+  <a class="btn small nav-link" aria-current="page" href="/baselines.html">基线</a>
+  <span style="flex:1"></span>
+  <span id="current-user" class="sub" style="min-width:0;max-width:100%;overflow-wrap:anywhere"></span>
+  <select id="g-bar" aria-label="切换项目"></select>
+  <a class="btn small" href="/index.html">返回首页</a>
+  <a class="btn small" href="javascript:logout()">退出</a>
+</nav>
+<div class="wrap" style="min-width:0">
+  <div class="card section-toolbar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <strong>基线</strong>
+    <select id="proj-sel" aria-label="项目" style="padding:6px 8px;max-width:100%"></select>
+    <span style="flex:1"></span><button class="btn primary small" id="new-button">＋ 新建基线</button>
+  </div>
+  <div class="err" id="page-error" role="alert" style="display:none;overflow-wrap:anywhere"></div>
+  <div id="list-view"><div class="card" id="baseline-list" style="min-width:0;overflow-wrap:anywhere"></div></div>
+  <div id="detail-view" class="card" style="display:none;min-width:0;overflow-wrap:anywhere"></div>
+</div>
+<div class="modal-overlay" id="select-overlay" style="display:none">
+  <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="select-title" style="width:min(650px,94vw);max-width:94vw;max-height:90vh;overflow:auto;overflow-wrap:anywhere">
+    <h3 id="select-title">新建基线</h3>
+    <div id="release-row"><label class="fld"><span>版本</span><select id="release-select" style="max-width:100%"></select></label><div class="sub" id="release-hint"></div></div>
+    <label class="fld"><span>分层</span><select id="layer-select"><option>R0</option><option>R1</option><option>R2</option><option>R3</option><option>R4</option></select></label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
+      <label class="fld" style="flex:1;min-width:0"><span>搜索用例</span><input id="case-search" placeholder="编号或标题" style="min-width:0;max-width:100%"></label>
+      <label class="fld" style="flex:1;min-width:0"><span>功能点</span><select id="feature-filter" style="max-width:100%"><option value="">全部功能点</option></select></label>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn small" id="select-visible" type="button">全选当前筛选结果</button><span id="selected-count" class="sub"></span></div>
+    <div id="case-list" style="max-height:32vh;overflow:auto;margin-top:8px"></div>
+    <div class="err" id="modal-error" role="alert" style="display:none;overflow-wrap:anywhere"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:12px"><button class="btn" id="cancel-select">取消</button><button class="btn primary" id="submit-select">保存</button></div>
+  </div>
+</div>
+<script src="/app-common.js"></script>
+<script>
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function api(path, opts) {
+  try { const r = await fetch(path, opts); if (r.status === 401) { location.href = '/login'; return {error:'请先登录',status:401}; } const data = await r.json(); return {...data,status:r.status}; }
+  catch (e) { return {error:'网络错误，请稍后重试',status:0}; }
+}
+function errorAt(id, message) { const el = $(id); el.textContent = message || ''; el.style.display = message ? 'block' : 'none'; }
+async function logout() { const r = await api('/api/logout', {method:'POST'}); if (r.error) errorAt('page-error', r.error); else location.href = '/login'; }
+const STATUS = {draft:'草稿',frozen:'已冻结',approved:'已批准'};
+let baselines = [], releases = [], cases = [], features = [], selected = new Set(), detail = null, selectionMode = 'create', loadSeq = 0, detailSeq = 0;
+function versionName(v) { const s = String(v == null ? '' : v); return s ? (/^v/i.test(s) ? s : 'v' + s) : '通用（不绑版本）'; }
+function shortHash(s) { return s ? String(s).slice(0,8) : '—'; }
+function fmtAt(s) { if (!s) return '—'; const raw=String(s); const iso=/Z$|[+-]\d\d:\d\d$/.test(raw)?raw:raw.replace(' ','T')+'Z'; const d=new Date(iso); return isNaN(d.getTime())?raw:d.toLocaleString('zh-CN',{hour12:false}); }
+function jsonOpts(method, body) { return {method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}; }
+async function init() {
+  const me = await api('/api/me'); if (me.error) { errorAt('page-error',me.error); return; }
+  $('current-user').textContent = me.display_name || me.username || '';
+  const boot = await api('/api/bootstrap'); if (!boot.ok) { errorAt('page-error',boot.error || '加载项目失败'); return; }
+  const projects = boot.projects || [];
+  $('proj-sel').innerHTML = projects.map(p => `<option value="${Number(p.id)}">${esc(p.name)}</option>`).join('');
+  const wanted = new URL(location.href).searchParams.get('project') || PoolUI.getProject();
+  if (projects.some(p => String(p.id) === wanted)) $('proj-sel').value = wanted;
+  if ($('proj-sel').value) { PoolUI.setProject($('proj-sel').value); const g=$('g-bar'); if (g.querySelector('option[value="'+$('proj-sel').value+'"]')) g.value=$('proj-sel').value; }
+  PoolUI.renderProjectBar('g-bar', {defaultFirst:true,allowAll:false,onChange:v => { location.href = '/baselines.html?project=' + encodeURIComponent(v); }});
+  $('proj-sel').onchange = () => { PoolUI.setProject($('proj-sel').value); location.href='/baselines.html?project='+encodeURIComponent($('proj-sel').value); };
+  $('new-button').onclick = () => openSelection('create'); $('cancel-select').onclick = closeSelection;
+  $('submit-select').onclick = submitSelection; $('case-search').oninput = renderCases; $('feature-filter').onchange = renderCases;
+  $('select-visible').onclick = () => { for (const t of filteredCases()) selected.add(t.id); renderCases(); };
+  if (!projects.length) { $('new-button').disabled=true; $('baseline-list').textContent='暂无可用项目，请先创建项目。'; return; }
+  await loadList();
+}
+async function loadList() {
+  const pid=$('proj-sel').value, seq=++loadSeq; errorAt('page-error','');
+  if (!pid) { $('baseline-list').textContent='暂无可用项目，请先创建项目。'; return false; }
+  const r=await api('/api/baselines?project_id='+encodeURIComponent(pid));
+  if (seq!==loadSeq) return false;
+  if (!r.ok) { errorAt('page-error',r.error || '加载基线失败'); return false; }
+  baselines=r.items || []; const groups=new Map();
+  for (const b of baselines) { const key=b.release_id == null ? 'common' : String(b.release_id); if(!groups.has(key)) groups.set(key,{version:b.release_version,items:[]}); groups.get(key).items.push(b); }
+  const container=$('baseline-list');
+  if (!baselines.length) { container.innerHTML='<div class="sub">暂无基线。基线用于冻结某一版本下的回归用例范围与内容。</div><button class="btn primary small" style="margin-top:8px" onclick="openSelection(\'create\')">新建基线</button>'; return true; }
+  container.innerHTML=[...groups.values()].map(g => `<h3 style="margin:12px 0 6px">${esc(versionName(g.version))}</h3>` + g.items.slice().sort((a,b)=>Number(b.revision)-Number(a.revision)).map(b => `<div class="tc-row" style="cursor:default;min-width:0"><strong>${esc(b.baseline_code)} · rev${esc(b.revision)}</strong><span class="badge">${esc(STATUS[b.state] || b.state)}</span><span>${esc(b.item_count)} 条</span><span class="sub" style="overflow-wrap:anywhere">${esc(shortHash(b.manifest_hash))}</span><span class="sub" style="overflow-wrap:anywhere">${esc(fmtAt(b.frozen_at))}</span><button class="btn small" onclick="loadDetail(${Number(b.id)})">查看</button></div>`).join('')).join('');
+  return true;
+}
+async function loadDetail(id, keepError) {
+  const seq=++detailSeq, pid=$('proj-sel').value; if (!keepError) errorAt('page-error','');
+  const r=await api('/api/baselines/'+id+'?project_id='+encodeURIComponent(pid));
+  if (seq!==detailSeq) return;
+  if (!r.ok) { errorAt('page-error',r.error || '加载详情失败'); return; }
+  detail={baseline:r.baseline,items:r.items || []}; renderDetail();
+}
+function showList() { detail=null; detailSeq++; $('detail-view').style.display='none'; $('list-view').style.display='block'; errorAt('page-error',''); loadList(); }
+function renderDetail() {
+  const b=detail.baseline, items=detail.items, entry=baselines.find(x=>x.id===b.id), draft=b.state==='draft';
+  const release=entry ? entry.release_version : ((releases.find(x=>x.id===b.release_id)||{}).version);
+  const el=$('detail-view'); $('list-view').style.display='none'; el.style.display='block';
+  el.innerHTML=`<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><strong>${esc(b.baseline_code)} · rev${esc(b.revision)}</strong><span>${esc(b.release_id == null ? '通用' : versionName(release))}</span><span class="badge">${esc(STATUS[b.state] || b.state)}</span><span>${items.length} 条</span><span style="flex:1"></span><button class="btn small" onclick="showList()">返回列表</button></div>
+    <div style="margin:8px 0;min-width:0">清单哈希：<span class="mono" style="overflow-wrap:anywhere">${esc(b.manifest_hash || '—')}</span> ${b.manifest_hash ? '<button class="btn small" onclick="copyManifest()">复制</button>' : ''}</div><div class="sub">冻结时间：${esc(fmtAt(b.frozen_at))}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">${draft ? '<button class="btn small" onclick="openSelection(\'add\')">＋ 加入用例</button><button class="btn primary small" onclick="confirmFreeze()">冻结</button>' : ''}<button class="btn small" onclick="createRevision()">另存新版本</button></div>
+    <div class="tc-row" style="font-weight:700;cursor:default"><span>TC 编号</span><span style="flex:1;min-width:100px">标题</span><span>分层</span><span>用例版本</span><span>快照哈希</span></div>` + (items.length ? items.map(i=>`<div class="tc-row" style="cursor:default;min-width:0"><span>${esc(i.tc_code)}</span><span style="flex:1;min-width:100px;overflow-wrap:anywhere">${esc(i.title)}</span><span>${esc(i.layer)}</span><span>v${esc(i.tc_version)}</span><span>${esc(shortHash(i.snapshot_hash))}</span>${draft ? `<button class="btn small danger" onclick="removeItem(${Number(i.id)})">移除</button>` : ''}</div>`).join('') : '<div class="tc-row" style="cursor:default">暂无用例条目。</div>');
+}
+async function copyManifest() {
+  try { if (!detail || !detail.baseline.manifest_hash) return; await navigator.clipboard.writeText(detail.baseline.manifest_hash); errorAt('page-error',''); }
+  catch(e) { errorAt('page-error','复制失败，请手动选择哈希复制'); }
+}
+async function loadSelectionData(pid) {
+  const [rel,fp,tc]=await Promise.all([api('/api/releases?project='+encodeURIComponent(pid)),api('/api/feature-points?project_id='+encodeURIComponent(pid)),api('/api/testcases?project='+encodeURIComponent(pid)+'&status=approved')]);
+  const fail=[rel,fp,tc].find(x=>!x.ok); if(fail) return {error:fail.error || '加载选择项失败'};
+  releases=rel.items || []; features=fp.items || []; const source=tc.items || [], result=[];
+  // The list API has no feature mapping; detail returns feature_points and retired at top level.
+  for(let start=0;start<source.length;start+=6) {
+    const batch=source.slice(start,start+6), responses=await Promise.all(batch.map(t=>api('/api/testcases/'+Number(t.id)+'?project_id='+encodeURIComponent(pid))));
+    const bad=responses.find(x=>!x.ok); if(bad) return {error:bad.error || '加载用例关联失败'};
+    responses.forEach((x,n)=>{if (!x.retired) result.push({...batch[n],feature_points:x.feature_points || []});});
+  }
+  cases=result; return {ok:true};
+}
+async function openSelection(mode) {
+  if (!$('proj-sel').value) { errorAt('page-error','暂无可用项目，请先创建项目。'); return; }
+  selectionMode=mode; selected=new Set(); $('select-title').textContent=mode==='create'?'新建基线':'加入用例'; $('release-row').style.display=mode==='create'?'':'none';
+  $('case-search').value=''; $('feature-filter').innerHTML='<option value="">全部功能点</option>'; $('case-list').textContent='加载中…'; $('selected-count').textContent='已选 0 条'; errorAt('modal-error','');
+  $('submit-select').disabled=true; $('select-overlay').style.display='flex'; const pid=$('proj-sel').value;
+  const data=await loadSelectionData(pid); if ($('select-overlay').style.display==='none' || $('proj-sel').value!==pid) return;
+  if (!data.ok) { $('case-list').textContent='无法加载用例。'; errorAt('modal-error',data.error); return; }
+  $('release-select').innerHTML='<option value="">通用（不绑版本）</option>'+releases.map(r=>`<option value="${Number(r.id)}">${esc(versionName(r.version))}（${esc(r.status)}）</option>`).join('');
+  $('release-hint').textContent=releases.length?'':'当前项目暂无发布版本，可创建通用基线。';
+  $('feature-filter').innerHTML='<option value="">全部功能点</option>'+features.map(f=>`<option value="${Number(f.id)}">${esc(f.fp_code)} ${esc(f.title)}</option>`).join('');
+  $('submit-select').disabled=false; renderCases();
+}
+function closeSelection() { $('select-overlay').style.display='none'; errorAt('modal-error',''); }
+function filteredCases() {
+  const q=$('case-search').value.trim().toLowerCase(), fp=$('feature-filter').value;
+  const already=new Set(selectionMode==='add' && detail ? detail.items.map(i=>i.tc_id) : []);
+  return cases.filter(t=>!already.has(t.id) && (!q || (String(t.tc_code)+' '+String(t.title)).toLowerCase().includes(q)) && (!fp || t.feature_points.some(f=>String(f.id)===fp)));
+}
+function renderCases() {
+  const shown=filteredCases(); $('selected-count').textContent='已选 '+selected.size+' 条';
+  $('case-list').innerHTML=shown.length ? shown.map(t=>`<label class="tc-row" style="cursor:pointer;min-width:0"><input type="checkbox" value="${Number(t.id)}" ${selected.has(t.id)?'checked':''} onchange="toggleCase(this)"><span class="tc-code">${esc(t.tc_code)}</span><span style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(t.title)}</span></label>`).join('') : '<div class="sub">暂无符合条件的已批准用例。</div>';
+}
+function toggleCase(input) { const id=Number(input.value); if(input.checked) selected.add(id); else selected.delete(id); $('selected-count').textContent='已选 '+selected.size+' 条'; }
+async function handleMutationError(r, inModal) {
+  if (r.status===409 && /基线已冻结/.test(r.error || '')) { if(inModal) closeSelection(); errorAt('page-error','基线已冻结，请刷新'); if(detail) await loadDetail(detail.baseline.id,true); }
+  else errorAt(inModal ? 'modal-error' : 'page-error',r.error || '操作失败');
+}
+async function submitSelection() {
+  const tc_ids=[...selected]; if(!tc_ids.length) { errorAt('modal-error','请至少选择一条用例'); return; }
+  const pid=Number($('proj-sel').value), layer=$('layer-select').value, adding=selectionMode==='add';
+  const path=adding?'/api/baselines/'+detail.baseline.id+'/items':'/api/baselines';
+  const body=adding?{tc_ids,layer}:{project_id:pid,release_id:$('release-select').value?Number($('release-select').value):null,layer,tc_ids};
+  $('submit-select').disabled=true; const r=await api(path,jsonOpts('POST',body)); $('submit-select').disabled=false;
+  if(!r.ok) { await handleMutationError(r,true); return; }
+  const id=adding?detail.baseline.id:r.id; closeSelection(); const ok=await loadList(); await loadDetail(id,!ok);
+}
+async function removeItem(itemId) {
+  if(!detail) return; const id=detail.baseline.id; const r=await api('/api/baselines/'+id+'/items/'+itemId,{method:'DELETE'});
+  if(!r.ok) { await handleMutationError(r,false); return; } const ok=await loadList(); await loadDetail(id,!ok);
+}
+function confirmFreeze() {
+  if(!detail) return; const id=detail.baseline.id;
+  PoolUI.showConfirm('冻结后基线条目不可修改，将生成不可变的清单哈希。确认冻结？',async()=>{
+    const pid=Number($('proj-sel').value); const r=await api('/api/baselines/'+id+'/freeze',jsonOpts('POST',{project_id:pid})); if(!r.ok){await handleMutationError(r,false);return;} const ok=await loadList(); await loadDetail(id,!ok);
+  });
+}
+async function createRevision() {
+  if(!detail) return; const pid=Number($('proj-sel').value); const r=await api('/api/baselines/'+detail.baseline.id+'/revision',jsonOpts('POST',{project_id:pid}));
+  if(!r.ok){await handleMutationError(r,false);return;} const ok=await loadList(); await loadDetail(r.id,!ok);
+}
+init();
+</script>
+</body>
+</html>
