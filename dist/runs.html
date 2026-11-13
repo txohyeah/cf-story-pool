@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>轮次 - 需求池</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="page-testcases">
+<nav class="topbar" aria-label="主导航">
+  <a class="btn small" href="/index.html">需求</a>
+  <a class="btn small nav-link" href="/docs.html">文档</a>
+  <a class="btn small nav-link" href="/releases.html">版本</a>
+  <a class="btn small nav-link" href="/testcases.html">用例</a>
+  <a class="btn small nav-link" href="/feature-points.html">功能点</a>
+  <a class="btn small nav-link" href="/baselines.html">基线</a>
+  <a class="btn small nav-link" aria-current="page" href="/runs.html">轮次</a>
+  <span style="flex:1"></span><span id="current-user" class="sub" style="min-width:0;max-width:100%;overflow-wrap:anywhere"></span>
+  <select id="g-bar" aria-label="切换项目"></select>
+  <a class="btn small" href="/index.html">返回首页</a><a class="btn small" href="javascript:logout()">退出</a>
+</nav>
+<div class="wrap" style="min-width:0">
+  <div class="card section-toolbar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <strong>轮次</strong><select id="proj-sel" aria-label="项目" style="padding:6px 8px;max-width:100%"></select>
+    <label>版本 <select id="release-filter" style="max-width:100%"><option value="">全部版本</option></select></label>
+    <span style="flex:1"></span><button class="btn primary small" id="new-button">＋ 新建轮次</button>
+  </div>
+  <div class="err" id="page-error" role="alert" style="display:none;overflow-wrap:anywhere"></div>
+  <div id="list-view"><div class="card" id="run-list" style="min-width:0;overflow-wrap:anywhere"></div></div>
+  <div id="detail-view" class="card" style="display:none;min-width:0;overflow-wrap:anywhere"></div>
+</div>
+<div class="modal-overlay" id="new-overlay" style="display:none">
+  <div class="modal card" role="dialog" aria-modal="true" aria-labelledby="new-title" style="width:min(560px,94vw);max-width:94vw;max-height:90vh;overflow:auto;overflow-wrap:anywhere">
+    <h3 id="new-title">新建轮次</h3>
+    <label class="fld"><span>版本（必选）</span><select id="new-release" style="max-width:100%"></select></label>
+    <label class="fld"><span>基线（必选）</span><select id="new-baseline" style="max-width:100%"></select></label>
+    <div class="sub" id="suggest-hint" style="overflow-wrap:anywhere"></div>
+    <label class="fld"><span>Build 标识</span><input id="new-build" maxlength="200"></label>
+    <label class="fld"><span>Commit</span><input id="new-commit" maxlength="200"></label>
+    <label class="fld"><span>环境</span><input id="new-environment" maxlength="500" value="staging"></label>
+    <div class="err" id="modal-error" role="alert" style="display:none;overflow-wrap:anywhere"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:12px"><button class="btn" id="cancel-new">取消</button><button class="btn primary" id="submit-new" disabled>创建</button></div>
+  </div>
+</div>
+<script src="/app-common.js"></script>
+<script>
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+async function api(path, opts) {
+  try { const r=await fetch(path,opts); if(r.status===401){location.href='/login';return {status:401,body:{error:'请先登录'}};} let body={}; try{body=await r.json();}catch(e){} return {status:r.status,body}; }
+  catch(e){return {status:0,body:{error:'网络错误，请稍后重试'}};}
+}
+function errorAt(id,message) { const el=$(id);el.textContent=message||'';el.style.display=message?'block':'none'; }
+function jsonOpts(method,body) { return {method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}; }
+function fmtAt(s) { if (!s) return '—'; const raw=String(s); const iso=/Z$|[+-]\d\d:\d\d$/.test(raw)?raw:raw.replace(' ','T')+'Z'; const d=new Date(iso); return isNaN(d.getTime())?raw:d.toLocaleString('zh-CN',{hour12:false}); }
+function versionName(v) { const s=String(v==null?'':v);return s?(/^v/i.test(s)?s:'v'+s):'—'; }
+function shortText(s) { return s?String(s).slice(0,8):'—'; }
+const STATES={planned:['待开始','#6b7280'],running:['进行中','#2563eb'],closed:['已关闭','#16a34a']};
+const RESULTS={pass:'通过',fail:'失败',deviation:'偏离',diff:'差异','':'未执行'};
+const COLORS={fail:'#dc2626',deviation:'#d97706',diff:'#7c3aed',empty:'#6b7280'};
+let releases=[],detail=null,editId=null,listSeq=0,detailSeq=0,suggestSeq=0,hasSuggestion=false;
+function badge(state) { const x=STATES[state] || [String(state||'未知'),'#6b7280']; return `<span class="badge" style="color:${esc(x[1])}">${esc(x[0])}</span>`; }
+function statParts(stat) { return ['fail','deviation','diff','empty'].map(k=>`<span class="badge" style="color:${COLORS[k]}">■ ${esc(({fail:'失败',deviation:'偏离',diff:'差异',empty:'未执行'})[k])} ${esc(Number(stat[k])||0)}</span>`).join(' '); }
+async function logout() { const r=await api('/api/logout',{method:'POST'});if(r.body.error)errorAt('page-error',r.body.error);else location.href='/login'; }
+async function init() {
+  const me=await api('/api/me');if(me.body.error){errorAt('page-error',me.body.error);return;} $('current-user').textContent=me.body.display_name||me.body.username||'';
+  const boot=await api('/api/bootstrap');if(!boot.body.ok){errorAt('page-error',boot.body.error||'加载项目失败');return;}
+  const projects=boot.body.projects||[];$('proj-sel').innerHTML=projects.map(p=>`<option value="${Number(p.id)}">${esc(p.name)}</option>`).join('');
+  const params=new URL(location.href).searchParams,want=params.get('project')||PoolUI.getProject();
+  if(projects.some(p=>String(p.id)===want))$('proj-sel').value=want;
+  if($('proj-sel').value)PoolUI.setProject($('proj-sel').value);
+  PoolUI.renderProjectBar('g-bar',{defaultFirst:true,allowAll:false,onChange:v=>{location.href='/runs.html?project='+encodeURIComponent(v);}});
+  $('proj-sel').onchange=()=>{PoolUI.setProject($('proj-sel').value);location.href='/runs.html?project='+encodeURIComponent($('proj-sel').value);};
+  $('release-filter').onchange=()=>{if(detail)showList();else loadList();};$('new-button').onclick=openNew;$('cancel-new').onclick=closeNew;$('new-release').onchange=loadSuggestion;$('new-baseline').onchange=updateSubmit;$('submit-new').onclick=createRun;
+  if(!projects.length){$('new-button').disabled=true;$('run-list').textContent='暂无可用项目，请先创建项目。';return;}
+  const pid=$('proj-sel').value, rel=await api('/api/releases?project='+encodeURIComponent(pid));
+  if(!rel.body.ok){errorAt('page-error',rel.body.error||'加载版本失败');return;}
+  releases=rel.body.items||[]; $('release-filter').innerHTML='<option value="">全部版本</option>'+releases.map(r=>`<option value="${Number(r.id)}">${esc(versionName(r.version))}</option>`).join('');
+  if(releases.length)$('release-filter').value=String(releases[0].id);
+  else {$('new-button').disabled=true;$('run-list').textContent='当前项目暂无版本，请先创建版本。';}
+  const rid=params.get('run');if(rid && /^[1-9]\d*$/.test(rid))await loadDetail(Number(rid));else if(releases.length)await loadList();
+}
+async function loadList() {
+  const seq=++listSeq,pid=$('proj-sel').value,rel=$('release-filter').value;errorAt('page-error','');
+  if(!pid){$('run-list').textContent='暂无可用项目，请先创建项目。';return;}
+  const r=await api('/api/runs?project_id='+encodeURIComponent(pid)+(rel?'&release_id='+encodeURIComponent(rel):''));
+  if(seq!==listSeq)return;if(!r.body.ok){errorAt('page-error',r.body.error||'加载轮次失败');return;}
+  const items=r.body.items||[];$('run-list').innerHTML=items.length?items.map(x=>`<div class="tc-row" style="cursor:default;min-width:0;overflow-wrap:anywhere"><strong>轮次 #${esc(x.round_no)}</strong>${badge(x.state)}<span>${esc(versionName(x.release_version))} · ${esc(x.baseline_code)} rev${esc(x.revision)}</span><span title="${esc(x.build_ref||'')}">build ${esc(shortText(x.build_ref))}</span><span title="${esc(x.commit_sha||'')}">commit ${esc(shortText(x.commit_sha))}</span><span>${esc(x.environment||'—')}</span><span>通过 ${esc(x.stat.pass)}/${esc(x.stat.total)}</span><span>${statParts(x.stat)}</span><span class="sub">${esc(fmtAt(x.created_at))}</span><span style="display:flex;gap:6px;flex-wrap:wrap">${x.state==='planned'?`<button class="btn small" onclick="startRun(${Number(x.id)},false)">开始</button>`:''}${x.state!=='closed'?`<button class="btn small" onclick="closeRun(${Number(x.id)},false)">关闭</button>`:''}<button class="btn small" onclick="openDetail(${Number(x.id)})">查看</button></span></div>`).join(''):'<div class="sub">还没有轮次，请点击「＋ 新建轮次」。</div>';
+}
+function openNew() {
+  errorAt('modal-error','');$('new-overlay').style.display='flex';$('new-build').value='';$('new-commit').value='';$('new-environment').value='staging';
+  $('new-release').innerHTML='<option value="">请选择版本</option>'+releases.map(r=>`<option value="${Number(r.id)}">${esc(versionName(r.version))}</option>`).join('');
+  $('new-release').value=$('release-filter').value||'';hasSuggestion=false;$('new-baseline').innerHTML='<option value="">请选择基线</option>';$('submit-new').disabled=true;
+  if($('new-release').value)loadSuggestion();else $('suggest-hint').textContent='请先选择版本。';
+}
+function closeNew(){suggestSeq++;$('new-overlay').style.display='none';errorAt('modal-error','');}
+function updateSubmit() { $('submit-new').disabled=!(hasSuggestion && $('new-release').value && $('new-baseline').value); }
+async function loadSuggestion() {
+  const seq=++suggestSeq,pid=$('proj-sel').value,rid=$('new-release').value;hasSuggestion=false;$('new-baseline').innerHTML='<option value="">请选择基线</option>';$('submit-new').disabled=true;errorAt('modal-error','');
+  if(!rid){$('suggest-hint').textContent='请先选择版本。';return;}
+  $('suggest-hint').textContent='正在加载建议基线…';
+  const r=await api('/api/runs/suggest-baseline?project_id='+encodeURIComponent(pid)+'&release_id='+encodeURIComponent(rid));
+  if(seq!==suggestSeq||$('new-release').value!==rid)return;
+  if(!r.body.ok){$('suggest-hint').textContent='';errorAt('modal-error',r.body.error||'加载基线失败');return;}
+  const candidates=(r.body.candidates||[]).filter(b=>b.release_id==null||String(b.release_id)===rid);
+  $('new-baseline').innerHTML='<option value="">请选择基线</option>'+candidates.map(b=>`<option value="${Number(b.id)}">${esc(b.baseline_code)} rev${esc(b.revision)}${b.release_id==null?'（通用）':''}</option>`).join('');
+  if(!r.body.baseline){$('suggest-hint').textContent='该项目还没有冻结基线，请先去基线页冻结';$('suggest-hint').style.color='var(--red)';return;}
+  $('suggest-hint').style.color='';$('suggest-hint').textContent=r.body.baseline.scope==='release'?'建议：该版本最新冻结基线':'建议：通用基线（该版本尚无冻结基线）';
+  $('new-baseline').value=String(r.body.baseline.id);hasSuggestion=candidates.some(b=>b.id===r.body.baseline.id);updateSubmit();
+}
+async function createRun() {
+  if(!hasSuggestion||!$('new-release').value||!$('new-baseline').value){errorAt('modal-error','请选择版本和冻结基线');return;}
+  const body={project_id:Number($('proj-sel').value),release_id:Number($('new-release').value),baseline_id:Number($('new-baseline').value),build_ref:$('new-build').value.trim(),commit_sha:$('new-commit').value.trim(),environment:$('new-environment').value.trim()};
+  $('submit-new').disabled=true;const r=await api('/api/runs',jsonOpts('POST',body));
+  if(!r.body.ok){errorAt('modal-error',r.body.error||'创建轮次失败');updateSubmit();return;}
+  closeNew();openDetail(r.body.id);
+}
+function openDetail(id) { const url=new URL(location.href);url.searchParams.set('project',$('proj-sel').value);url.searchParams.set('run',String(id));history.pushState(null,'',url.pathname+url.search+url.hash);loadDetail(id); }
+function showList(){detail=null;editId=null;detailSeq++;const url=new URL(location.href);url.searchParams.delete('run');history.pushState(null,'',url.pathname+url.search+url.hash);$('detail-view').style.display='none';$('list-view').style.display='block';loadList();}
+async function loadDetail(id,keepError) {
+  const seq=++detailSeq;if(!keepError)errorAt('page-error','');const r=await api('/api/runs/'+id+'?project_id='+encodeURIComponent($('proj-sel').value));
+  if(seq!==detailSeq)return;if(!r.body.ok){errorAt('page-error',r.body.error||'加载轮次失败');return;} detail=r.body;editId=null;renderDetail();
+}
+function renderDetail() {
+  const r=detail.run,st=detail.stat||{},items=detail.items||[],closed=r.state==='closed',total=Number(st.total)||0,done=Math.max(0,total-(Number(st.empty)||0)),percent=total?Math.round(done*100/total):0;
+  $('list-view').style.display='none';const el=$('detail-view');el.style.display='block';
+  el.innerHTML=`<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><strong>轮次 #${esc(r.round_no)} · 版本 ${esc(versionName(r.release_version))} · 基线 ${esc(r.baseline_code)} rev${esc(r.revision)}</strong>${badge(r.state)}<span style="flex:1"></span><button class="btn small" onclick="showList()">返回列表</button></div>
+    <div class="sub" style="margin-top:8px;overflow-wrap:anywhere">build ${esc(r.build_ref||'—')} ｜ commit ${esc(r.commit_sha||'—')} ｜ 环境 ${esc(r.environment||'—')}</div>
+    <div class="sub">开轮 ${esc(fmtAt(r.created_at))} ｜ 关轮 ${esc(fmtAt(r.closed_at))}</div><div style="overflow-wrap:anywhere">基线哈希：<span class="mono">${esc((r.baseline||{}).manifest_hash||'—')}</span> ${(r.baseline||{}).manifest_hash?'<button class="btn small" onclick="copyManifest()">复制</button>':''}</div>
+    <div style="margin:10px 0">进度 ${esc(done)}/${esc(total)}（${esc(percent)}%）<div role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}" style="height:6px;background:var(--line);border-radius:4px;overflow:hidden"><div style="height:100%;width:${percent}%;background:var(--blue)"></div></div><span class="badge" style="color:var(--green)">■ 通过 ${esc(Number(st.pass)||0)}</span> ${statParts(st)}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">${r.state==='planned'?`<button class="btn small" onclick="startRun(${Number(r.id)},true)">开始轮次</button>`:''}${!closed?`<button class="btn primary small" onclick="closeRun(${Number(r.id)},true)">关闭轮次</button>`:''}</div>
+    <div class="tc-row" style="font-weight:700;cursor:default"><span>TC 编号</span><span style="flex:1;min-width:100px">标题</span><span>层/版本</span><span>结果</span><span>结论</span><span>执行人/时间</span>${closed?'':'<span>操作</span>'}</div>`+
+    (items.length?items.map(i=>`<div class="tc-row" style="cursor:default;min-width:0;overflow-wrap:anywhere"><span>${esc(i.tc_code)}</span><span style="flex:1;min-width:100px">${esc(i.title)}</span><span>${esc(i.layer)} / v${esc(i.tc_version)}</span><span>${esc(RESULTS[i.result]||i.result||'未执行')}</span><span>${esc(i.conclusion||'—')}</span><span>${esc(i.executor||'—')} / ${esc(fmtAt(i.executed_at))}</span>${closed?'':`<button class="btn small" onclick="editResult(${Number(i.tc_id)})">打结果</button>`}</div>${!closed && editId===i.tc_id?resultForm(i):''}`).join(''):'<div class="sub">基线中暂无用例条目。</div>');
+}
+function resultForm(i) { return `<div class="tc-row" style="cursor:default;display:block"><label class="fld"><span>结果</span><select id="result-select">${['pass','fail','deviation','diff'].map(x=>`<option value="${x}" ${x===i.result?'selected':''}>${esc(RESULTS[x])}</option>`).join('')}</select></label><label class="fld"><span>结论</span><textarea id="result-conclusion" rows="2">${esc(i.conclusion||'')}</textarea></label><div class="err" id="result-error" role="alert" style="display:none"></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary small" onclick="saveResult(${Number(i.tc_id)})">保存</button><button class="btn small" onclick="cancelResult()">取消</button></div></div>`; }
+function editResult(id){if(!detail||detail.run.state==='closed')return;editId=id;renderDetail();}
+function cancelResult(){editId=null;renderDetail();}
+async function saveResult(tcId) {
+  if(!detail||detail.run.state==='closed')return;const id=detail.run.id,existing=detail.items.find(i=>i.tc_id===tcId);
+  const body={run_id:id,project_id:Number($('proj-sel').value),result:$('result-select').value,conclusion:$('result-conclusion').value,dev_ref:(existing&&existing.dev_ref)||'',ev_ref:(existing&&existing.ev_ref)||''};
+  const r=await api('/api/testcases/'+tcId+'/execution',jsonOpts('PUT',body));if(!r.body.ok){errorAt('result-error',r.body.error||'保存结果失败');return;}await loadDetail(id);
+}
+async function startRun(id,inDetail) {
+  const r=await api('/api/runs/'+id+'/start',jsonOpts('POST',{project_id:Number($('proj-sel').value)}));if(!r.body.ok){errorAt('page-error',r.body.error||'开始轮次失败');return;}if(inDetail)await loadDetail(id);else await loadList();
+}
+async function closeRun(id,inDetail,confirmed=false) {
+  const body={project_id:Number($('proj-sel').value)};if(confirmed)body.confirm_partial=true;
+  const r=await api('/api/runs/'+id+'/close',jsonOpts('POST',body));
+  if(!r.body.ok){if(!confirmed&&r.status===409&&Number.isInteger(r.body.pending)&&r.body.pending>0){const codes=Array.isArray(r.body.pending_codes)?r.body.pending_codes.join('、'):'';PoolUI.showConfirm('还有 '+r.body.pending+' 条未执行'+(codes?'（'+codes+'）':'')+'，仍要关闭吗？',()=>closeRun(id,inDetail,true));return;}errorAt('page-error',r.body.error||'关闭轮次失败');return;}
+  if(inDetail)await loadDetail(id);else openDetail(id);
+}
+async function copyManifest(){try{if(!detail||!(detail.run.baseline||{}).manifest_hash)return;await navigator.clipboard.writeText(detail.run.baseline.manifest_hash);errorAt('page-error','');}catch(e){errorAt('page-error','复制失败，请手动选择哈希复制');}}
+window.addEventListener('popstate',()=>{const rid=new URL(location.href).searchParams.get('run');if(rid&&/^[1-9]\d*$/.test(rid))loadDetail(Number(rid));else{detail=null;detailSeq++;$('detail-view').style.display='none';$('list-view').style.display='block';loadList();}});
+init();
+</script>
+</body>
+</html>
